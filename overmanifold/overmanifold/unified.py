@@ -29,6 +29,9 @@ from overmanifold.workers.transaction_endpoint import (
 from overmanifold.tokenization.github_repo import (
     RepoTokenizer, RepoGovernanceEngine, RepositoryMicroCompany
 )
+from overmanifold.validators.browser_surface import (
+    BrowserValidatorSurface, ValidatorSurfaceIntegration, ValidationTarget
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -56,6 +59,10 @@ class OvermanifoldUnified:
         # Initialize GitHub repository tokenization
         self.repo_tokenizer = RepoTokenizer()
         self.repo_governance = RepoGovernanceEngine(self.repo_tokenizer)
+        
+        # Initialize browser-native validator surfaces
+        self.browser_validator = BrowserValidatorSurface()
+        self.validator_integration = ValidatorSurfaceIntegration(self.browser_validator)
         
         # Unified state
         self.unified_endpoints: Dict[str, Dict] = {}  # endpoint_id -> {core, governance, routing, consensus}
@@ -299,6 +306,11 @@ class OvermanifoldUnified:
                 'total_repos': len(self.repo_tokenizer.tokenized_repos),
                 'total_valuation': sum(company.valuation_usd for company in self.repo_tokenizer.tokenized_repos.values()),
                 'merkle_root': str(self.repo_tokenizer.merkle_tree.get_root_hash()) if self.repo_tokenizer.merkle_tree and self.repo_tokenizer.merkle_tree.get_root_hash() else None
+            },
+            'validator_surfaces': {
+                'total_surfaces': len(self.browser_validator.surfaces),
+                'surface_stats': self.browser_validator.get_surface_stats(),
+                'integration_stats': self.validator_integration.get_integration_stats()
             },
             'unified_endpoints': {
                 ep_id: {
@@ -546,6 +558,66 @@ class OvermanifoldUnified:
             logger.error(f"Failed to calculate rewards: {e}")
             return {'success': False, 'error': str(e)}
     
+    def validate_with_browser_surface(self, validation_target: str, data: Dict) -> Dict:
+        """
+        Validate data using browser-native validator surfaces.
+        Supports state transitions, Merkle proofs, signatures, consensus proofs.
+        """
+        try:
+            target = ValidationTarget(validation_target)
+            
+            # Create validation task
+            from overmanifold.validators.browser_surface import ValidationTask
+            task = ValidationTask(
+                task_id="",
+                target=target,
+                data=data,
+                priority=1
+            )
+            
+            # Execute validation
+            result = self.browser_validator.submit_validation_task(task)
+            
+            # Record coordination event
+            self.coordination_events.append({
+                'type': 'browser_validation',
+                'validation_target': validation_target,
+                'task_id': result.task_id,
+                'valid': result.valid,
+                'confidence': result.confidence,
+                'backend_used': result.backend_used.value,
+                'execution_time_ms': result.execution_time_ms,
+                'timestamp': datetime.now().isoformat()
+            })
+            
+            logger.info(f"Browser validation: {validation_target} -> {result.valid} (confidence: {result.confidence})")
+            
+            return {
+                'success': True,
+                'result': result.to_dict()
+            }
+        except Exception as e:
+            logger.error(f"Browser validation failed: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    def get_validator_surface_stats(self) -> Dict:
+        """Get statistics for all validator surfaces."""
+        return {
+            'success': True,
+            'surface_stats': self.browser_validator.get_surface_stats(),
+            'integration_stats': self.validator_integration.get_integration_stats()
+        }
+    
+    def generate_javascript_bindings(self) -> Dict:
+        """Generate JavaScript bindings for browser integration."""
+        js_code = self.browser_validator.generate_javascript_bindings()
+        
+        return {
+            'success': True,
+            'javascript_bindings': js_code,
+            'generated_at': datetime.now().isoformat()
+        }
+    
     def simulate_civilization_scale_coordination(self):
         """
         Simulate civilization-scale coordination to demonstrate the system
@@ -738,6 +810,54 @@ async def main():
         )
         if rewards_result['success']:
             print(f"Calculated rewards for {len(rewards_result['rewards'])} contributors")
+    
+    # Test browser-native validator surfaces
+    print("\n=== Browser-Native Validator Surfaces ===")
+    
+    # Validate state transition
+    validation_result = overmanifold.validate_with_browser_surface(
+        "state_transition",
+        {
+            "transition_id": "test_transition_123",
+            "from_state": "state_a",
+            "to_state": "state_b",
+            "timestamp": datetime.now().isoformat(),
+            "signature": "test_signature"
+        }
+    )
+    if validation_result['success']:
+        result = validation_result['result']
+        print(f"State transition validation: {result['valid']} (confidence: {result['confidence']})")
+        print(f"Backend: {result['backend_used']}, Execution time: {result['execution_time_ms']:.2f}ms")
+    
+    # Validate Merkle proof
+    merkle_validation = overmanifold.validate_with_browser_surface(
+        "merkle_proof",
+        {
+            "leaf_hash": "abc123",
+            "root_hash": "def456",
+            "proof_path": [("hash1", True), ("hash2", False)]
+        }
+    )
+    if merkle_validation['success']:
+        result = merkle_validation['result']
+        print(f"Merkle proof validation: {result['valid']} (confidence: {result['confidence']})")
+        print(f"Backend: {result['backend_used']}, Execution time: {result['execution_time_ms']:.2f}ms")
+    
+    # Get validator surface stats
+    stats_result = overmanifold.get_validator_surface_stats()
+    if stats_result['success']:
+        stats = stats_result['surface_stats']
+        print(f"Active validator surfaces: {len(stats)}")
+        for surface_id, surface_stats in stats.items():
+            print(f"  {surface_id}: {surface_stats['total_validations']} validations, "
+                  f"{surface_stats['success_rate']:.1%} success rate")
+    
+    # Generate JavaScript bindings
+    js_result = overmanifold.generate_javascript_bindings()
+    if js_result['success']:
+        print(f"Generated JavaScript bindings for browser integration")
+        print(f"Binding size: {len(js_result['javascript_bindings'])} characters")
     
     # Get unified state
     print("\n=== Unified System State ===")
