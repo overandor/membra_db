@@ -26,6 +26,9 @@ from overmanifold.consensus.proof_of_profit import (
 from overmanifold.workers.transaction_endpoint import (
     TransactionObserver, TransactionWorkerScheduler, LifecycleState
 )
+from overmanifold.tokenization.github_repo import (
+    RepoTokenizer, RepoGovernanceEngine, RepositoryMicroCompany
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -49,6 +52,10 @@ class OvermanifoldUnified:
         # Initialize transaction endpoint workers (V2 capsule)
         self.transaction_observer = TransactionObserver()
         self.worker_scheduler = TransactionWorkerScheduler(self.transaction_observer)
+        
+        # Initialize GitHub repository tokenization
+        self.repo_tokenizer = RepoTokenizer()
+        self.repo_governance = RepoGovernanceEngine(self.repo_tokenizer)
         
         # Unified state
         self.unified_endpoints: Dict[str, Dict] = {}  # endpoint_id -> {core, governance, routing, consensus}
@@ -288,6 +295,11 @@ class OvermanifoldUnified:
                 'merkle_root': str(self.transaction_observer.merkle_tree.get_root_hash()) if self.transaction_observer.merkle_tree and self.transaction_observer.merkle_tree.get_root_hash() else None,
                 'scheduled_workers': len(self.worker_scheduler.scheduled_workers)
             },
+            'repo_micro_companies': {
+                'total_repos': len(self.repo_tokenizer.tokenized_repos),
+                'total_valuation': sum(company.valuation_usd for company in self.repo_tokenizer.tokenized_repos.values()),
+                'merkle_root': str(self.repo_tokenizer.merkle_tree.get_root_hash()) if self.repo_tokenizer.merkle_tree and self.repo_tokenizer.merkle_tree.get_root_hash() else None
+            },
             'unified_endpoints': {
                 ep_id: {
                     'endpoint_id': ep_id,
@@ -438,6 +450,100 @@ class OvermanifoldUnified:
             return {'success': False, 'error': 'Worker not found'}
         except Exception as e:
             logger.error(f"Failed to attest worker: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    def tokenize_github_repository(self, repo_url: str, 
+                                   initial_valuation_usd: float = 100000.0,
+                                   token_supply: float = 1000000.0) -> Dict:
+        """
+        Tokenize a GitHub repository into a micro-company.
+        Integrates repository tokenization with Overmanifold coordination.
+        """
+        try:
+            micro_company = self.repo_tokenizer.tokenize_repository(
+                repo_url, initial_valuation_usd, token_supply
+            )
+            
+            # Register as coordination event
+            self.coordination_events.append({
+                'type': 'repo_tokenized',
+                'repo_id': micro_company.repo_id,
+                'token_id': micro_company.token.token_id,
+                'valuation_usd': micro_company.valuation_usd,
+                'token_supply': micro_company.token.total_supply,
+                'merkle_root': micro_company.merkle_root,
+                'timestamp': datetime.now().isoformat()
+            })
+            
+            logger.info(f"Tokenized repository: {micro_company.repo_id} as {micro_company.token.token_symbol}")
+            
+            return {
+                'success': True,
+                'micro_company': micro_company.to_dict(),
+                'token': micro_company.token.to_dict()
+            }
+        except Exception as e:
+            logger.error(f"Failed to tokenize repository: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    def get_repo_micro_company(self, repo_id: str) -> Dict:
+        """Get tokenized micro-company for repository."""
+        company = self.repo_tokenizer.get_repo_company(repo_id)
+        if company:
+            return {'success': True, 'micro_company': company.to_dict()}
+        return {'success': False, 'error': 'Repository not tokenized'}
+    
+    def create_repo_merkle_proof(self, repo_id: str) -> Dict:
+        """Create Merkle proof for repository micro-company."""
+        try:
+            proof = self.repo_tokenizer.create_repo_proof(repo_id)
+            if proof:
+                return {
+                    'success': True,
+                    'proof': proof.to_dict(),
+                    'merkle_root': str(self.repo_tokenizer.merkle_tree.get_root_hash()) if self.repo_tokenizer.merkle_tree and self.repo_tokenizer.merkle_tree.get_root_hash() else None
+                }
+            return {'success': False, 'error': 'Failed to create proof'}
+        except Exception as e:
+            logger.error(f"Failed to create Merkle proof: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    def create_repo_governance_proposal(self, repo_id: str, proposal_type: str,
+                                       description: str, parameters: Dict) -> Dict:
+        """Create governance proposal for repository micro-company."""
+        try:
+            proposal_id = self.repo_governance.create_proposal(
+                repo_id, proposal_type, description, parameters
+            )
+            
+            self.coordination_events.append({
+                'type': 'repo_governance_proposal',
+                'repo_id': repo_id,
+                'proposal_id': proposal_id,
+                'proposal_type': proposal_type,
+                'timestamp': datetime.now().isoformat()
+            })
+            
+            return {
+                'success': True,
+                'proposal_id': proposal_id,
+                'proposal': self.repo_governance.proposals[proposal_id]
+            }
+        except Exception as e:
+            logger.error(f"Failed to create proposal: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    def calculate_contributor_rewards(self, repo_id: str, total_reward: float) -> Dict:
+        """Calculate reward distribution for repository contributors."""
+        try:
+            rewards = self.repo_tokenizer.calculate_contributor_rewards(repo_id, total_reward)
+            return {
+                'success': True,
+                'rewards': rewards,
+                'total_reward': total_reward
+            }
+        except Exception as e:
+            logger.error(f"Failed to calculate rewards: {e}")
             return {'success': False, 'error': str(e)}
     
     def simulate_civilization_scale_coordination(self):
@@ -594,6 +700,44 @@ async def main():
         proof_result = overmanifold.create_transaction_merkle_proof("ethereum", tx_data['hash'])
         if proof_result['success']:
             print(f"Created Merkle proof for transaction")
+    
+    # Test GitHub repository tokenization
+    print("\n=== GitHub Repository Tokenization ===")
+    repo_url = "https://github.com/overmanifold/protocol"
+    tokenization_result = overmanifold.tokenize_github_repository(
+        repo_url,
+        initial_valuation_usd=500000.0,
+        token_supply=1000000.0
+    )
+    
+    if tokenization_result['success']:
+        micro_company = tokenization_result['micro_company']
+        token = tokenization_result['token']
+        print(f"Tokenized repository: {micro_company['repo_name']}")
+        print(f"Token symbol: {token['token_symbol']}")
+        print(f"Valuation: ${micro_company['valuation_usd']:,.2f}")
+        print(f"Token supply: {token['total_supply']:,.0f}")
+        print(f"Price per token: ${token['price_per_token']:.6f}")
+        print(f"Contributors: {len(micro_company['contributors'])}")
+        print(f"Merkle root: {micro_company['merkle_root'][:16]}...")
+        
+        # Create governance proposal
+        proposal_result = overmanifold.create_repo_governance_proposal(
+            micro_company['repo_id'],
+            "treasury_allocation",
+            "Allocate 10% of treasury to development fund",
+            {"percentage": 0.1, "fund_type": "development"}
+        )
+        if proposal_result['success']:
+            print(f"Created governance proposal: {proposal_result['proposal_id']}")
+        
+        # Calculate contributor rewards
+        rewards_result = overmanifold.calculate_contributor_rewards(
+            micro_company['repo_id'],
+            10000.0
+        )
+        if rewards_result['success']:
+            print(f"Calculated rewards for {len(rewards_result['rewards'])} contributors")
     
     # Get unified state
     print("\n=== Unified System State ===")
