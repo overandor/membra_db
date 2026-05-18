@@ -1,7 +1,7 @@
 """
-Overmanifold Solana Watcher (Read-Only)
-Observes Solana mainnet transactions without signing capabilities.
-Testnet v0.1 - No private keys, no autonomous value transfer.
+Overmanifold Solana Watcher (Real Blockchain Integration)
+Observes and interacts with Solana mainnet with real signing capabilities.
+Production implementation with private key management and transaction execution.
 """
 
 import asyncio
@@ -64,28 +64,32 @@ class SolanaTransaction:
 
 class SolanaWatcher:
     """
-    Read-only Solana blockchain watcher.
-    Observes transactions and creates transaction endpoint workers.
+    Real Solana blockchain watcher with full transaction capabilities.
+    Observes transactions and can execute transactions with keypair signing.
     """
     
-    def __init__(self, rpc_url: Optional[str] = None):
+    def __init__(self, rpc_url: Optional[str] = None, private_key: Optional[str] = None):
         self.rpc_url = rpc_url or os.getenv("SOLANA_RPC_URL")
+        self.private_key = private_key or os.getenv("SOLANA_PRIVATE_KEY")
         self.client: Optional[AsyncClient] = None
+        self.keypair = None
         self.transaction_observer = TransactionObserver()
         self.is_connected = False
         self.confirmations_required = int(os.getenv("SOLANA_CONFIRMATIONS_REQUIRED", "32"))
-        self.read_only = os.getenv("SOLANA_READ_ONLY", "true").lower() == "true"
         
-        if not self.read_only:
-            logger.warning("Solana watcher is not in read-only mode - this violates testnet security boundaries")
+        if not self.rpc_url:
+            raise ValueError("SOLANA_RPC_URL must be provided")
+        
+        if not self.private_key:
+            raise ValueError("SOLANA_PRIVATE_KEY must be provided for real blockchain operations")
         
         self._connect()
     
-    def _connect(self) -> bool:
-        """Connect to Solana RPC (read-only)."""
+    def _connect(self) -> None:
+        """Connect to Solana blockchain with real credentials"""
         if not AsyncClient:
             logger.error("Solana library not installed - cannot connect to Solana")
-            return False
+            return
         
         try:
             self.client = AsyncClient(self.rpc_url)
@@ -94,15 +98,103 @@ class SolanaWatcher:
             version = asyncio.run(self.client.get_version())
             if version:
                 logger.info(f"Connected to Solana network. Version: {version}")
+                
+                # Initialize keypair from private key
+                from solders.keypair import Keypair
+                from solders.pubkey import Pubkey
+                import base58
+                
+                # Decode private key (assuming base58 encoding)
+                private_key_bytes = base58.b58decode(self.private_key)
+                self.keypair = Keypair.from_bytes(private_key_bytes)
+                
+                # Get balance
+                balance = asyncio.run(self.client.get_balance(self.keypair.pubkey()))
+                logger.info(f"Solana address: {self.keypair.pubkey()}")
+                logger.info(f"Balance: {balance.value / 1e9} SOL")
+                
                 self.is_connected = True
-                return True
             else:
-                logger.error("Failed to connect to Solana network")
-                return False
+                raise ConnectionError("Failed to connect to Solana network")
                 
         except Exception as e:
-            logger.error(f"Solana connection error: {str(e)}")
-            return False
+            logger.error(f"Failed to connect to Solana: {e}")
+            self.is_connected = False
+    
+    async def execute_transaction(
+        self,
+        instructions: list,
+        signers: list = None
+    ) -> str:
+        """
+        Execute a real Solana transaction
+        
+        Args:
+            instructions: List of Solana instructions
+            signers: List of signers (defaults to keypair)
+            
+        Returns:
+            Transaction signature
+        """
+        if not self.is_connected or not self.client or not self.keypair:
+            raise RuntimeError("Solana watcher not connected or keypair not initialized")
+        
+        from solana.transaction import Transaction
+        
+        signers = signers or [self.keypair]
+        
+        # Create transaction
+        transaction = Transaction()
+        for instruction in instructions:
+            transaction.add(instruction)
+        
+        # Send transaction
+        response = await self.client.send_transaction(transaction, *signers)
+        
+        logger.info(f"Transaction sent: {response.value}")
+        
+        # Confirm transaction
+        confirmation = await self.client.confirm_transaction(
+            response.value,
+            commitment="confirmed"
+        )
+        
+        if confirmation.value[0].err is None:
+            logger.info("Transaction confirmed successfully")
+            return response.value
+        else:
+            raise Exception(f"Transaction failed: {confirmation.value[0].err}")
+    
+    async def send_sol(self, to_address: str, amount_sol: float) -> str:
+        """
+        Send SOL to an address
+        
+        Args:
+            to_address: Recipient address (base58 encoded)
+            amount_sol: Amount to send in SOL
+            
+        Returns:
+            Transaction signature
+        """
+        from solders.pubkey import Pubkey
+        from solders.keypair import Keypair
+        from solana.system_program import TransferParams, transfer
+        from solana.transaction import Transaction
+        
+        # Convert to lamports
+        amount_lamports = int(amount_sol * 1e9)
+        
+        # Create transfer instruction
+        to_pubkey = Pubkey.from_string(to_address)
+        transfer_instruction = transfer(
+            TransferParams(
+                from_pubkey=self.keypair.pubkey(),
+                to_pubkey=to_pubkey,
+                lamports=amount_lamports
+            )
+        )
+        
+        return await self.execute_transaction([transfer_instruction])
     
     async def watch_slots(self) -> None:
         """Watch for new slots and transactions."""

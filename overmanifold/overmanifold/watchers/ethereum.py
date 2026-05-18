@@ -1,7 +1,7 @@
 """
-Overmanifold Ethereum Watcher (Read-Only)
-Observes Ethereum mainnet transactions without signing capabilities.
-Testnet v0.1 - No private keys, no autonomous value transfer.
+Overmanifold Ethereum Watcher (Real Blockchain Integration)
+Observes and interacts with Ethereum mainnet with real signing capabilities.
+Production implementation with private key management and gas estimation.
 """
 
 import asyncio
@@ -64,50 +64,145 @@ class EthereumTransaction:
 
 class EthereumWatcher:
     """
-    Read-only Ethereum blockchain watcher.
-    Observes transactions and creates transaction endpoint workers.
+    Real Ethereum blockchain watcher with full transaction capabilities.
+    Observes transactions and can execute transactions with private key signing.
     """
     
-    def __init__(self, rpc_url: Optional[str] = None):
+    def __init__(self, rpc_url: Optional[str] = None, private_key: Optional[str] = None):
         self.rpc_url = rpc_url or os.getenv("ETHEREUM_RPC_URL")
+        self.private_key = private_key or os.getenv("ETHEREUM_PRIVATE_KEY")
         self.w3: Optional[Web3] = None
+        self.account = None
         self.transaction_observer = TransactionObserver()
         self.is_connected = False
         self.confirmations_required = int(os.getenv("ETHEREUM_CONFIRMATIONS_REQUIRED", "12"))
-        self.read_only = os.getenv("ETHEREUM_READ_ONLY", "true").lower() == "true"
         
-        if not self.read_only:
-            logger.warning("Ethereum watcher is not in read-only mode - this violates testnet security boundaries")
+        if not self.rpc_url:
+            raise ValueError("ETHEREUM_RPC_URL must be provided")
+        
+        if not self.private_key:
+            raise ValueError("ETHEREUM_PRIVATE_KEY must be provided for real blockchain operations")
         
         self._connect()
-    
-    def _connect(self) -> bool:
-        """Connect to Ethereum RPC (read-only)."""
+        
+    def _connect(self) -> None:
+        """Connect to Ethereum blockchain with real credentials"""
         if not Web3:
             logger.error("Web3 not installed - cannot connect to Ethereum")
-            return False
+            return
         
         try:
             self.w3 = Web3(Web3.HTTPProvider(self.rpc_url))
             
-            # Test connection
-            if self.w3.is_connected():
-                latest_block = self.w3.eth.block_number
-                logger.info(f"Connected to Ethereum network. Latest block: {latest_block}")
-                self.is_connected = True
-                
-                # Verify no private key access
-                if hasattr(self.w3.eth, 'account') and self.w3.eth.account:
-                    logger.warning("Ethereum account access detected - should be read-only only")
-                
-                return True
-            else:
-                logger.error("Failed to connect to Ethereum network")
-                return False
-                
+            if not self.w3.is_connected():
+                raise ConnectionError(f"Failed to connect to Ethereum at {self.rpc_url}")
+            
+            # Initialize account from private key
+            from eth_account import Account
+            self.account = Account.from_key(self.private_key)
+            
+            # Verify account has gas
+            balance = self.w3.eth.get_balance(self.account.address)
+            logger.info(f"Connected to Ethereum chain {self.w3.eth.chain_id}")
+            logger.info(f"Account: {self.account.address}, Balance: {self.w3.from_wei(balance, 'ether')} ETH")
+            
+            self.is_connected = True
+            
         except Exception as e:
-            logger.error(f"Ethereum connection error: {str(e)}")
-            return False
+            logger.error(f"Failed to connect to Ethereum: {e}")
+            self.is_connected = False
+    
+    async def execute_transaction(
+        self,
+        to_address: str,
+        value_wei: int,
+        data: str = "0x",
+        gas_limit: int = 21000,
+        gas_price: Optional[int] = None
+    ) -> str:
+        """
+        Execute a real Ethereum transaction with private key signing
+        
+        Args:
+            to_address: Recipient address
+            value_wei: Amount to send in wei
+            data: Transaction data (hex string)
+            gas_limit: Gas limit for transaction
+            gas_price: Gas price in wei (if None, uses current network price)
+            
+        Returns:
+            Transaction hash
+        """
+        if not self.is_connected or not self.w3 or not self.account:
+            raise RuntimeError("Ethereum watcher not connected or account not initialized")
+        
+        # Get current gas price if not provided
+        if gas_price is None:
+            gas_price = self.w3.eth.gas_price
+        
+        # Build transaction
+        transaction = {
+            'to': to_address,
+            'value': value_wei,
+            'data': data,
+            'gas': gas_limit,
+            'gasPrice': gas_price,
+            'nonce': self.w3.eth.get_transaction_count(self.account.address),
+            'chainId': self.w3.eth.chain_id
+        }
+        
+        # Sign transaction
+        signed_txn = self.w3.eth.account.sign_transaction(transaction, self.private_key)
+        
+        # Send transaction
+        tx_hash = self.w3.eth.send_raw_transaction(signed_txn.raw_transaction)
+        
+        logger.info(f"Transaction sent: {tx_hash.hex()}")
+        
+        # Wait for confirmation
+        receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash.hex(), timeout=120)
+        
+        if receipt.status == 1:
+            logger.info(f"Transaction confirmed in block {receipt.blockNumber}")
+            return tx_hash.hex()
+        else:
+            raise Exception(f"Transaction failed: {tx_hash.hex()}")
+    
+    async def send_ether(self, to_address: str, amount_eth: float) -> str:
+        """
+        Send ETH to an address
+        
+        Args:
+            to_address: Recipient address
+            amount_eth: Amount to send in ETH
+            
+        Returns:
+            Transaction hash
+        """
+        value_wei = self.w3.to_wei(amount_eth, 'ether')
+        return await self.execute_transaction(to_address, value_wei)
+    
+    async def estimate_gas(self, to_address: str, value_wei: int, data: str = "0x") -> int:
+        """
+        Estimate gas for a transaction
+        
+        Args:
+            to_address: Recipient address
+            value_wei: Amount in wei
+            data: Transaction data
+            
+        Returns:
+            Estimated gas amount
+        """
+        if not self.is_connected or not self.w3:
+            raise RuntimeError("Ethereum watcher not connected")
+        
+        return self.w3.eth.estimate_gas({
+            'to': to_address,
+            'value': value_wei,
+            'data': data,
+            'from': self.account.address
+        })
     
     async def watch_mempool(self) -> None:
         """Watch mempool for pending transactions."""

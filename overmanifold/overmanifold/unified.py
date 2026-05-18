@@ -5,6 +5,7 @@ Complete integration of all Overmanifold components into a unified civilization-
 
 import asyncio
 import logging
+import os
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 import json
@@ -15,10 +16,19 @@ from overmanifold.core.engine import (
     SemanticIntent, Capability, CapabilityType, StateTransitionType
 )
 from overmanifold.governance.llm_engine import (
-    LLMGovernanceEngine, MockLLMProvider, IntentType as GovIntentType
+    LLMGovernanceEngine, OpenAIProvider, AnthropicProvider, IntentType as GovIntentType
 )
 from overmanifold.routing.geodesic import (
     LiquidityManifold, GeodesicRouter, ManifoldEdge, RoutingConstraintValue, RoutingConstraint
+)
+from overmanifold.defi.real_liquidity import (
+    RealLiquidityManager, LiquidityPool as RealLiquidityPool, DEXType
+)
+from overmanifold.blockchain.token_deployment import (
+    RealTokenDeployer, TokenDeployment, TokenStandard
+)
+from overmanifold.security.key_manager import (
+    create_production_key_manager
 )
 from overmanifold.consensus.proof_of_profit import (
     ProofOfProfitConsensus, WorkType, ConsensusStatus
@@ -26,6 +36,8 @@ from overmanifold.consensus.proof_of_profit import (
 from overmanifold.workers.transaction_endpoint import (
     TransactionObserver, TransactionWorkerScheduler, LifecycleState
 )
+from overmanifold.watchers.ethereum import EthereumWatcher
+from overmanifold.watchers.solana import SolanaWatcher
 from overmanifold.tokenization.github_repo import (
     RepoTokenizer, RepoGovernanceEngine, RepositoryMicroCompany
 )
@@ -44,10 +56,58 @@ class OvermanifoldUnified:
     into a single civilization-scale coordination architecture.
     """
     
-    def __init__(self, initial_supply: float = 1_000_000_000):
+    def __init__(self, initial_supply: float = 1_000_000_000, llm_provider: str = None, llm_api_key: str = None):
+        # Initialize key manager
+        self.key_manager = create_production_key_manager()
+        
         # Initialize core components
         self.core_engine = OvermanifoldEngine()
-        self.llm_governance = LLMGovernanceEngine(MockLLMProvider())
+        
+        # Initialize real LLM provider based on configuration
+        llm_provider = llm_provider or os.getenv("LLM_PROVIDER", "openai")
+        llm_api_key = llm_api_key or self.key_manager.get_llm_api_key(llm_provider)
+        
+        if llm_provider.lower() == "openai":
+            llm_model = os.getenv("LLM_MODEL", "gpt-4")
+            llm = OpenAIProvider(api_key=llm_api_key, model=llm_model)
+        elif llm_provider.lower() == "anthropic":
+            llm_model = os.getenv("LLM_MODEL", "claude-3-opus-20240229")
+            llm = AnthropicProvider(api_key=llm_api_key, model=llm_model)
+        else:
+            raise ValueError(f"Unsupported LLM provider: {llm_provider}")
+        
+        self.llm_governance = LLMGovernanceEngine(llm)
+        
+        # Initialize real blockchain components
+        eth_rpc_url = self.key_manager.get_rpc_url("ethereum")
+        eth_private_key = self.key_manager.get_blockchain_private_key("ethereum")
+        
+        self.ethereum_watcher = EthereumWatcher(
+            rpc_url=eth_rpc_url,
+            private_key=eth_private_key
+        )
+        
+        sol_rpc_url = self.key_manager.get_rpc_url("solana")
+        sol_private_key = self.key_manager.get_blockchain_private_key("solana")
+        
+        self.solana_watcher = SolanaWatcher(
+            rpc_url=sol_rpc_url,
+            private_key=sol_private_key
+        )
+        
+        # Initialize real DeFi components
+        self.real_liquidity_manager = RealLiquidityManager(
+            private_key=eth_private_key,
+            rpc_url=eth_rpc_url
+        )
+        
+        # Initialize real token deployer
+        self.real_token_deployer = RealTokenDeployer(
+            private_key=eth_private_key,
+            rpc_url=eth_rpc_url
+        )
+        
+        # Keep the routing manifold for pathfinding
         self.liquidity_manifold = LiquidityManifold()
         self.geodesic_router = GeodesicRouter(self.liquidity_manifold)
         self.proof_of_profit = ProofOfProfitConsensus(initial_supply=initial_supply)

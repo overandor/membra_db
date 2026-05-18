@@ -131,69 +131,77 @@ class LLMProvider(ABC):
         pass
 
 
-class MockLLMProvider(LLMProvider):
-    """Mock LLM provider for testing"""
+class OpenAIProvider(LLMProvider):
+    """Real OpenAI LLM provider for production"""
     
-    def __init__(self):
+    def __init__(self, api_key: str, model: str = "gpt-4"):
+        self.api_key = api_key
+        self.model = model
         self.call_count = 0
+        
+        try:
+            import openai
+            self.client = openai.AsyncOpenAI(api_key=api_key)
+        except ImportError:
+            raise ImportError("OpenAI library not installed. Install with: pip install openai")
     
     async def generate_interpretation(
         self,
         intent: str,
         context: Dict
     ) -> Tuple[str, float]:
-        """Generate mock interpretation"""
+        """Generate interpretation using real OpenAI API"""
         self.call_count += 1
         
-        # Simple keyword-based interpretation
-        intent_lower = intent.lower()
+        system_prompt = """You are an economic governance interpreter for the Overmanifold Protocol. 
+Analyze human intent and convert it into structured economic tasks.
+Respond ONLY with valid JSON in this format:
+{
+    "intent_type": "resource_allocation|liquidity_routing|trust_establishment|computation_request|message_relay",
+    "description": "detailed description",
+    "required_capabilities": ["capability1", "capability2"],
+    "priority": "critical|high|medium|low",
+    "estimated_cost": float,
+    "governance_approval": boolean
+}"""
+
+        user_prompt = f"Human Intent: {intent}\nContext: {json.dumps(context, indent=2)}"
         
-        if any(word in intent_lower for word in ['allocate', 'resource', 'distribute']):
-            interpretation = json.dumps({
-                'intent_type': 'resource_allocation',
-                'description': intent,
-                'required_capabilities': ['computation_availability', 'storage_reliability'],
-                'priority': 'high',
-                'estimated_cost': 150.0,
-                'governance_approval': True
-            })
-            confidence = 0.8
+        try:
+            response = await self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.3,
+                max_tokens=500
+            )
             
-        elif any(word in intent_lower for word in ['route', 'swap', 'liquidity', 'bridge']):
-            interpretation = json.dumps({
-                'intent_type': 'liquidity_routing',
-                'description': intent,
-                'required_capabilities': ['settlement_optionality', 'relay_throughput'],
-                'priority': 'critical',
-                'estimated_cost': 200.0,
-                'governance_approval': False
-            })
-            confidence = 0.9
+            interpretation_text = response.choices[0].message.content.strip()
+            confidence = 0.85  # Base confidence for GPT-4
             
-        elif any(word in intent_lower for word in ['trust', 'verify', 'validate']):
-            interpretation = json.dumps({
-                'intent_type': 'trust_establishment',
-                'description': intent,
-                'required_capabilities': ['oracle_confidence', 'proof_generation'],
-                'priority': 'high',
-                'estimated_cost': 100.0,
-                'governance_approval': True
-            })
-            confidence = 0.75
+            # Validate JSON response
+            try:
+                json.loads(interpretation_text)
+            except json.JSONDecodeError:
+                # Fallback to structured format if JSON parsing fails
+                interpretation_text = json.dumps({
+                    'intent_type': 'message_relay',
+                    'description': intent,
+                    'required_capabilities': ['messaging_reachability'],
+                    'priority': 'low',
+                    'estimated_cost': 25.0,
+                    'governance_approval': False
+                })
+                confidence = 0.5
             
-        elif any(word in intent_lower for word in ['compute', 'calculate', 'process']):
-            interpretation = json.dumps({
-                'intent_type': 'computation_request',
-                'description': intent,
-                'required_capabilities': ['computation_availability'],
-                'priority': 'medium',
-                'estimated_cost': 75.0,
-                'governance_approval': False
-            })
-            confidence = 0.85
+            return interpretation_text, confidence
             
-        else:
-            interpretation = json.dumps({
+        except Exception as e:
+            logger.error(f"OpenAI API call failed: {e}")
+            # Fallback to basic interpretation
+            interpretation_text = json.dumps({
                 'intent_type': 'message_relay',
                 'description': intent,
                 'required_capabilities': ['messaging_reachability'],
@@ -201,12 +209,88 @@ class MockLLMProvider(LLMProvider):
                 'estimated_cost': 25.0,
                 'governance_approval': False
             })
-            confidence = 0.6
+            return interpretation_text, 0.3
+
+
+class AnthropicProvider(LLMProvider):
+    """Real Anthropic Claude LLM provider for production"""
+    
+    def __init__(self, api_key: str, model: str = "claude-3-opus-20240229"):
+        self.api_key = api_key
+        self.model = model
+        self.call_count = 0
         
-        # Simulate processing delay
-        await asyncio.sleep(0.1)
+        try:
+            import anthropic
+            self.client = anthropic.AsyncAnthropic(api_key=api_key)
+        except ImportError:
+            raise ImportError("Anthropic library not installed. Install with: pip install anthropic")
+    
+    async def generate_interpretation(
+        self,
+        intent: str,
+        context: Dict
+    ) -> Tuple[str, float]:
+        """Generate interpretation using real Anthropic API"""
+        self.call_count += 1
         
-        return interpretation, confidence
+        system_prompt = """You are an economic governance interpreter for the Overmanifold Protocol. 
+Analyze human intent and convert it into structured economic tasks.
+Respond ONLY with valid JSON in this format:
+{
+    "intent_type": "resource_allocation|liquidity_routing|trust_establishment|computation_request|message_relay",
+    "description": "detailed description",
+    "required_capabilities": ["capability1", "capability2"],
+    "priority": "critical|high|medium|low",
+    "estimated_cost": float,
+    "governance_approval": boolean
+}"""
+
+        user_prompt = f"Human Intent: {intent}\nContext: {json.dumps(context, indent=2)}"
+        
+        try:
+            response = await self.client.messages.create(
+                model=self.model,
+                max_tokens=500,
+                system=system_prompt,
+                messages=[
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.3
+            )
+            
+            interpretation_text = response.content[0].text.strip()
+            confidence = 0.88  # Base confidence for Claude Opus
+            
+            # Validate JSON response
+            try:
+                json.loads(interpretation_text)
+            except json.JSONDecodeError:
+                # Fallback to structured format if JSON parsing fails
+                interpretation_text = json.dumps({
+                    'intent_type': 'message_relay',
+                    'description': intent,
+                    'required_capabilities': ['messaging_reachability'],
+                    'priority': 'low',
+                    'estimated_cost': 25.0,
+                    'governance_approval': False
+                })
+                confidence = 0.5
+            
+            return interpretation_text, confidence
+            
+        except Exception as e:
+            logger.error(f"Anthropic API call failed: {e}")
+            # Fallback to basic interpretation
+            interpretation_text = json.dumps({
+                'intent_type': 'message_relay',
+                'description': intent,
+                'required_capabilities': ['messaging_reachability'],
+                'priority': 'low',
+                'estimated_cost': 25.0,
+                'governance_approval': False
+            })
+            return interpretation_text, 0.3
 
 
 class LLMGovernanceEngine:
