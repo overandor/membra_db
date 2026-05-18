@@ -623,6 +623,8 @@ open http://localhost:8000/docs
 - ⚠️ Compliance review (regulatory, AML/KYC, data privacy, securities law)
 - ⚠️ Operational monitoring under real load (metrics, alerting, capacity planning)
 
+**Production Readiness**: See `OVERMANIFOLD_PRODUCTION_READINESS_GATES_V1.md` for complete gate checklist and validation requirements.
+
 **Deployment Stage**: Internal Devnet
 **Next Stage**: Closed Alpha (4-8 weeks, requires security audit completion)
 

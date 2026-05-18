@@ -378,6 +378,8 @@ def display_system_overview():
     print()
     print("Missing: Security audits, adversarial testing, treasury controls,")
     print("         compliance review, staged deployment hardening")
+    print()
+    print("See: OVERMANIFOLD_PRODUCTION_READINESS_GATES_V1.md")
     print("-" * 80)
     print()
     
