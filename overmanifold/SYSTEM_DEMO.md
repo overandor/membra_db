@@ -4,6 +4,33 @@
 
 The Overmanifold Protocol is a **civilization-scale cryptographic-economic coordination architecture** that integrates multiple advanced components into a unified system.
 
+## ⚠️ CRITICAL STATUS DISCLAIMER
+
+**Current Status: Production Candidate Network (PCN) / MVP Alpha**
+
+Overmanifold is **feature-complete for guarded alpha/PCN testing**, but **NOT production-ready** until:
+- ✅ External security audits (smart contracts, WebAssembly, WebGPU, key management)
+- ✅ Adversarial testing (penetration testing, red teaming, economic attack simulations)
+- ✅ Treasury controls (multi-sig wallets, spending limits, governance procedures)
+- ✅ Compliance review (regulatory, AML/KYC, data privacy, securities law)
+- ✅ Staged mainnet hardening (internal devnet → closed alpha → public staging → limited mainnet beta → audited guarded mainnet → DAO-governed production)
+
+**What IS Safe:**
+- ✅ **Can demo?** Yes - Component demonstrations and architecture exploration
+- ✅ **Can test with controlled users?** Yes - Closed alpha with trusted participants
+- ✅ **Can touch limited real infrastructure?** Yes - Read-only blockchain access, testnet deployments
+
+**What is NOT Safe:**
+- ❌ **Can launch unrestricted with user funds?** NO - Not until all security requirements above are complete
+- ❌ **Can handle significant value?** NO - Treasury controls and audits required first
+- ❌ **Can operate as public mainnet?** NO - Staged deployment hardening required
+
+**Security Status:** Guarded Production Candidate
+**Deployment Stage:** Internal Devnet
+**Risk Level:** Medium (feature-complete, security-hardening in progress)
+
+**See `SECURITY_DEPLOYMENT_STATUS.md` for complete security assessment and deployment roadmap.**
+
 ## 🏗️ System Components
 
 ### 1. Core Engine (`overmanifold/core/engine.py`)
@@ -557,28 +584,49 @@ open http://localhost:8000/docs
 
 ## 📈 Current Status
 
-**System Status**: Production Candidate Network (PCN)
+**System Status**: Production Candidate Network (PCN) / MVP Alpha
 
-**Components Operational**:
-- ✅ Core Engine
-- ✅ LLM Governance (Mock/OpenAI/Anthropic)
-- ✅ Geodesic Routing
-- ✅ Merkle Provenance
-- ✅ Proof-of-Profit Consensus
-- ✅ Transaction Workers
-- ✅ Ethereum Watcher (Read-only)
-- ✅ Solana Watcher (Read-only)
-- ✅ Real WASM Validators
-- ✅ Real WebGPU Validators
-- ✅ API Server
+**Components Operational** (9/9):
+- ✅ Core Engine - Endpoint management, state transitions, capabilities
+- ✅ LLM Governance - Mock/OpenAI/Anthropic integration
+- ✅ Geodesic Routing - Trust-constrained path finding, liquidity manifold
+- ✅ Merkle Provenance - Cryptographic provenance, hash chains, proofs
+- ✅ Proof-of-Profit Consensus - Economic work verification, rewards, inverse mining
+- ✅ Transaction Workers - Blockchain transaction lifecycle management
+- ✅ Ethereum Watcher - Read-only mainnet integration
+- ✅ Solana Watcher - Read-only mainnet integration
+- ✅ Real Validators - WASM/WebGPU validation surfaces
+- ✅ API Server - FastAPI with health checks and monitoring
+
+**Safety Assessment**:
+
+**✅ SAFE FOR:**
+- Component demonstrations and architecture exploration
+- Closed alpha testing with trusted participants
+- Read-only blockchain access and monitoring
+- Testnet deployments with zero-value transactions
+- Development and integration testing
+
+**❌ NOT SAFE FOR:**
+- Unrestricted production deployment with user funds
+- Handling significant value without treasury controls
+- Public mainnet operation without security audits
+- Real transaction execution with user assets
+- Commercial operation without compliance review
 
 **Security Status**: Guarded Production Candidate
-- External security audits required
-- Adversarial testing required
-- Key management hardening required
-- Operational monitoring required
+**Missing Security Elements**:
+- ⚠️ External security audits (smart contracts, WebAssembly, WebGPU, key management)
+- ⚠️ Adversarial testing (penetration testing, red teaming, economic attack simulations)
+- ⚠️ Treasury controls (multi-sig wallets, spending limits, governance procedures)
+- ⚠️ Key management hardening (HSM integration, rotation procedures)
+- ⚠️ Compliance review (regulatory, AML/KYC, data privacy, securities law)
+- ⚠️ Operational monitoring under real load (metrics, alerting, capacity planning)
 
-See `SECURITY_DEPLOYMENT_STATUS.md` for detailed security assessment.
+**Deployment Stage**: Internal Devnet
+**Next Stage**: Closed Alpha (4-8 weeks, requires security audit completion)
+
+**See `SECURITY_DEPLOYMENT_STATUS.md` for detailed security assessment and staged deployment roadmap.**
 
 ---
 
