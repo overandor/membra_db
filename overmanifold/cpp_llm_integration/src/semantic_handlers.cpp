@@ -34,6 +34,37 @@ std::string TransferPayload::generate_nonce() {
     return sha256(input).substr(0, 16);
 }
 
+// Helper function to serialize TransferPayload to JSON
+nlohmann::json serializePayload(const TransferPayload& payload) {
+    nlohmann::json semantic_value = {
+        {"amount", payload.semantic_value.amount},
+        {"currency", payload.semantic_value.currency},
+        {"semantic_type", static_cast<int>(payload.semantic_value.semantic_type)},
+        {"sender", payload.semantic_value.sender},
+        {"recipient", payload.semantic_value.recipient},
+        {"metadata", payload.semantic_value.metadata},
+        {"conditions", payload.semantic_value.conditions}
+    };
+    
+    if (payload.semantic_value.expires_at.has_value()) {
+        auto expires_time_t = std::chrono::system_clock::to_time_t(payload.semantic_value.expires_at.value());
+        std::stringstream ss;
+        ss << std::put_time(std::localtime(&expires_time_t), "%FT%T");
+        semantic_value["expires_at"] = ss.str();
+    }
+    
+    return nlohmann::json{
+        {"semantic_value", semantic_value},
+        {"channel", static_cast<int>(payload.channel)},
+        {"channel_address", payload.channel_address},
+        {"signature", payload.signature},
+        {"nonce", payload.nonce},
+        {"network_id", payload.network_id},
+        {"gas_limit", payload.gas_limit},
+        {"gas_price", payload.gas_price}
+    };
+}
+
 // SmsHandler implementation
 SmsHandler::SmsHandler()
     : sms_pattern_(R"(@(\w+):([\d.]+)\.(\w+):to:([^\s:]+)(?::for:([^\s:]+))?(?::ref:([^\s:]+))?(?::exp:(\d+))?")") {
@@ -529,6 +560,469 @@ std::optional<TransferChannel> SemanticTransferHandler::autoDetectChannel(const 
     }
     
     return std::nullopt;
+}
+
+// ============================================================================
+// SMART CONTRACT SYSTEM IMPLEMENTATION
+// ============================================================================
+
+// SmartContract implementation
+SmartContract::SmartContract(const std::string& addr, ContractType type, const std::string& crtr)
+    : address(addr), contract_type(type), creator(crtr), state(ContractState::DEPLOYED),
+      code_hash(calculateCodeHash(addr, type)), created_at(std::chrono::system_clock::now()),
+      updated_at(std::chrono::system_clock::now()) {
+    
+    // Initialize storage
+    storage["owner"] = crtr;
+    storage["balances"] = nlohmann::json::object();
+    storage["allowances"] = nlohmann::json::object();
+    storage["total_supply"] = 0;
+    storage["nonce"] = 0;
+}
+
+std::string SmartContract::calculateCodeHash(const std::string& addr, ContractType type) {
+    std::string code = addr + std::to_string(static_cast<int>(type));
+    return sha256(code);
+}
+
+void SmartContract::setState(ContractState new_state) {
+    state = new_state;
+    updated_at = std::chrono::system_clock::now();
+}
+
+ContractResult SmartContract::execute(const ContractCall& call) {
+    if (state != ContractState::ACTIVE) {
+        return ContractResult{
+            false, nlohmann::json::object(), 0, {}, 
+            "Contract not active", nlohmann::json::object()
+        };
+    }
+    
+    nlohmann::json return_value;
+    if (call.function_name == "transfer") {
+        return_value = executeTransfer(call.parameters);
+    } else if (call.function_name == "balance_of") {
+        return_value = executeBalanceOf(call.parameters);
+    } else if (call.function_name == "approve") {
+        return_value = executeApprove(call.parameters);
+    } else if (call.function_name == "process_payment") {
+        return_value = executeProcessPayment(call.parameters);
+    } else if (call.function_name == "create_escrow") {
+        return_value = executeCreateEscrow(call.parameters);
+    } else if (call.function_name == "submit_proposal") {
+        return_value = executeSubmitProposal(call.parameters);
+    } else if (call.function_name == "create_subscription") {
+        return_value = executeCreateSubscription(call.parameters);
+    } else {
+        return_value = nlohmann::json{{"error", "Unknown function"}};
+    }
+    
+    uint64_t gas_used = call.gas_limit;
+    std::vector<nlohmann::json> events;
+    events.push_back(generateEvent(call.function_name, call.parameters, return_value));
+    
+    // Update storage
+    storage["nonce"] = storage["nonce"].get<int>() + 1;
+    updated_at = std::chrono::system_clock::now();
+    
+    return ContractResult{
+        true, return_value, gas_used, events, "", 
+        nlohmann::json{{"nonce", storage["nonce"]}}
+    };
+}
+
+nlohmann::json SmartContract::executeTransfer(const nlohmann::json& params) {
+    std::string to = params.value("to", "unknown");
+    double amount = params.value("amount", 0.0);
+    
+    auto& balances = storage["balances"];
+    double from_balance = balances.value(creator, 0.0);
+    
+    if (from_balance < amount) {
+        return nlohmann::json{{"error", "Insufficient balance"}};
+    }
+    
+    double to_balance = balances.value(to, 0.0);
+    balances[creator] = from_balance - amount;
+    balances[to] = to_balance + amount;
+    
+    return nlohmann::json{
+        {"success", true},
+        {"from_balance", from_balance - amount},
+        {"to_balance", to_balance + amount}
+    };
+}
+
+nlohmann::json SmartContract::executeBalanceOf(const nlohmann::json& params) {
+    std::string account = params.value("account", "unknown");
+    auto& balances = storage["balances"];
+    double balance = balances.value(account, 0.0);
+    return nlohmann::json{{"balance", balance}};
+}
+
+nlohmann::json SmartContract::executeApprove(const nlohmann::json& params) {
+    std::string spender = params.value("spender", "unknown");
+    double amount = params.value("amount", 0.0);
+    
+    auto& allowances = storage["allowances"];
+    if (!allowances.contains(creator)) {
+        allowances[creator] = nlohmann::json::object();
+    }
+    allowances[creator][spender] = amount;
+    
+    return nlohmann::json{{"success", true}, {"spender", spender}, {"amount", amount}};
+}
+
+nlohmann::json SmartContract::executeProcessPayment(const nlohmann::json& params) {
+    // Simplified payment processing
+    auto payload = params["payload"];
+    double amount = payload.value("amount", 0.0);
+    
+    if (amount <= 0.0) {
+        return nlohmann::json{{"error", "Invalid amount"}};
+    }
+    
+    int payment_count = storage.value("payment_count", 0);
+    double total_volume = storage.value("total_volume", 0.0);
+    
+    storage["payment_count"] = payment_count + 1;
+    storage["total_volume"] = total_volume + amount;
+    
+    return nlohmann::json{{"success", true}, {"payment_count", payment_count + 1}};
+}
+
+nlohmann::json SmartContract::executeCreateEscrow(const nlohmann::json& params) {
+    auto payload = params["payload"];
+    auto conditions = params.value("conditions", std::vector<std::string>{});
+    
+    int escrow_count = storage.value("escrow_count", 0);
+    std::string escrow_id = "escrow_" + std::to_string(escrow_count + 1);
+    
+    auto now = std::chrono::system_clock::now();
+    auto now_time_t = std::chrono::system_clock::to_time_t(now);
+    std::stringstream ss;
+    ss << std::put_time(std::localtime(&now_time_t), "%FT%T");
+    
+    nlohmann::json escrow_data = {
+        {"payload", payload},
+        {"conditions", conditions},
+        {"status", "pending"},
+        {"created_at", ss.str()},
+        {"released_at", nullptr},
+        {"refunded_at", nullptr}
+    };
+    
+    if (!storage.contains("escrows")) {
+        storage["escrows"] = nlohmann::json::object();
+    }
+    storage["escrows"][escrow_id] = escrow_data;
+    storage["escrow_count"] = escrow_count + 1;
+    
+    return nlohmann::json{{"success", true}, {"escrow_id", escrow_id}};
+}
+
+nlohmann::json SmartContract::executeSubmitProposal(const nlohmann::json& params) {
+    auto payload = params["payload"];
+    std::string proposer = params.value("proposer", "unknown");
+    
+    int proposal_count = storage.value("proposal_count", 0);
+    std::string proposal_id = "proposal_" + std::to_string(proposal_count + 1);
+    
+    auto now = std::chrono::system_clock::now();
+    auto now_time_t = std::chrono::system_clock::to_time_t(now);
+    std::stringstream ss;
+    ss << std::put_time(std::localtime(&now_time_t), "%FT%T");
+    
+    nlohmann::json proposal_data = {
+        {"payload", payload},
+        {"proposer", proposer},
+        {"approvals", nlohmann::json::array()},
+        {"executed", false},
+        {"created_at", ss.str()}
+    };
+    
+    if (!storage.contains("proposals")) {
+        storage["proposals"] = nlohmann::json::object();
+    }
+    storage["proposals"][proposal_id] = proposal_data;
+    storage["proposal_count"] = proposal_count + 1;
+    
+    return nlohmann::json{{"success", true}, {"proposal_id", proposal_id}};
+}
+
+nlohmann::json SmartContract::executeCreateSubscription(const nlohmann::json& params) {
+    std::string subscriber = params.value("subscriber", "unknown");
+    double amount = params.value("amount", 0.0);
+    int interval_days = params.value("interval_days", 30);
+    
+    int sub_count = storage.value("subscription_count", 0);
+    std::string subscription_id = "sub_" + std::to_string(sub_count + 1);
+    
+    auto next_payment = std::chrono::system_clock::now() + std::chrono::hours(24 * interval_days);
+    auto next_payment_time_t = std::chrono::system_clock::to_time_t(next_payment);
+    std::stringstream ss;
+    ss << std::put_time(std::localtime(&next_payment_time_t), "%FT%T");
+    
+    auto now = std::chrono::system_clock::now();
+    auto now_time_t = std::chrono::system_clock::to_time_t(now);
+    std::stringstream ss2;
+    ss2 << std::put_time(std::localtime(&now_time_t), "%FT%T");
+    
+    nlohmann::json subscription_data = {
+        {"subscriber", subscriber},
+        {"amount", amount},
+        {"interval_days", interval_days},
+        {"next_payment", ss.str()},
+        {"active", true},
+        {"created_at", ss2.str()}
+    };
+    
+    if (!storage.contains("subscriptions")) {
+        storage["subscriptions"] = nlohmann::json::object();
+    }
+    storage["subscriptions"][subscription_id] = subscription_data;
+    storage["subscription_count"] = sub_count + 1;
+    
+    return nlohmann::json{{"success", true}, {"subscription_id", subscription_id}};
+}
+
+nlohmann::json SmartContract::generateEvent(const std::string& function_name, const nlohmann::json& params, const nlohmann::json& result) {
+    auto now = std::chrono::system_clock::now();
+    auto now_time_t = std::chrono::system_clock::to_time_t(now);
+    std::stringstream ss;
+    ss << std::put_time(std::localtime(&now_time_t), "%FT%T");
+    
+    return nlohmann::json{
+        {"event_type", "contract_event"},
+        {"function_name", function_name},
+        {"contract_address", address},
+        {"timestamp", ss.str()},
+        {"parameters", params},
+        {"result", result}
+    };
+}
+
+// CustomNetwork implementation
+CustomNetwork::CustomNetwork(const std::string& net_id)
+    : network_id(net_id), block_number(0), transaction_count(0),
+      semantic_handler(std::make_unique<SemanticTransferHandler>()) {}
+
+std::string CustomNetwork::deployContract(std::shared_ptr<SmartContract> contract) {
+    contract->setState(ContractState::ACTIVE);
+    contracts[contract->address] = contract;
+    block_number++;
+    return contract->address;
+}
+
+ContractResult CustomNetwork::executeContract(const ContractCall& call) {
+    auto it = contracts.find(call.contract_address);
+    if (it == contracts.end()) {
+        return ContractResult{
+            false, nlohmann::json::object(), 0, {}, 
+            "Contract not found", nlohmann::json::object()
+        };
+    }
+    
+    auto result = it->second->execute(call);
+    if (result.success) {
+        transaction_count++;
+    }
+    return result;
+}
+
+ContractResult CustomNetwork::processSemanticTransfer(const TransferPayload& payload) {
+    switch (payload.semantic_value.semantic_type) {
+        case SemanticType::PAYMENT:
+            return processPayment(payload);
+        case SemanticType::ESCROW:
+            return processEscrow(payload);
+        case SemanticType::MULTI_SIG:
+            return processMultiSig(payload);
+        case SemanticType::SUBSCRIPTION:
+            return processSubscription(payload);
+        default:
+            return processGenericTransfer(payload);
+    }
+}
+
+ContractResult CustomNetwork::processPayment(const TransferPayload& payload) {
+    auto contract = getOrCreatePaymentContract();
+    
+    ContractCall call{
+        contract->address,
+        "process_payment",
+        nlohmann::json{{"payload", serializePayload(payload)}},
+        payload.semantic_value.sender,
+        21000,
+        0.00001,
+        payload.nonce,
+        std::chrono::system_clock::now()
+    };
+    
+    return executeContract(call);
+}
+
+ContractResult CustomNetwork::processEscrow(const TransferPayload& payload) {
+    auto contract = getOrCreateEscrowContract();
+    
+    ContractCall call{
+        contract->address,
+        "create_escrow",
+        nlohmann::json{
+            {"payload", serializePayload(payload)},
+            {"conditions", payload.semantic_value.conditions}
+        },
+        payload.semantic_value.sender,
+        21000,
+        0.00001,
+        payload.nonce,
+        std::chrono::system_clock::now()
+    };
+    
+    return executeContract(call);
+}
+
+ContractResult CustomNetwork::processMultiSig(const TransferPayload& payload) {
+    auto contract = getOrCreateMultiSigContract();
+    
+    ContractCall call{
+        contract->address,
+        "submit_proposal",
+        nlohmann::json{
+            {"payload", serializePayload(payload)},
+            {"proposer", payload.semantic_value.sender}
+        },
+        payload.semantic_value.sender,
+        21000,
+        0.01,
+        payload.nonce,
+        std::chrono::system_clock::now()
+    };
+    
+    return executeContract(call);
+}
+
+ContractResult CustomNetwork::processSubscription(const TransferPayload& payload) {
+    auto contract = getOrCreateSubscriptionContract();
+    
+    ContractCall call{
+        contract->address,
+        "create_subscription",
+        nlohmann::json{
+            {"subscriber", payload.semantic_value.recipient},
+            {"amount", payload.semantic_value.amount},
+            {"interval_days", 30}
+        },
+        payload.semantic_value.sender,
+        21000,
+        0.00001,
+        payload.nonce,
+        std::chrono::system_clock::now()
+    };
+    
+    return executeContract(call);
+}
+
+ContractResult CustomNetwork::processGenericTransfer(const TransferPayload& payload) {
+    auto contract = getOrCreateTokenContract();
+    
+    ContractCall call{
+        contract->address,
+        "transfer",
+        nlohmann::json{
+            {"to", payload.semantic_value.recipient},
+            {"amount", payload.semantic_value.amount}
+        },
+        payload.semantic_value.sender,
+        21000,
+        0.00001,
+        payload.nonce,
+        std::chrono::system_clock::now()
+    };
+    
+    return executeContract(call);
+}
+
+std::shared_ptr<SmartContract> CustomNetwork::getOrCreatePaymentContract() {
+    auto it = contracts.find("payment_contract_001");
+    if (it != contracts.end()) {
+        return it->second;
+    }
+    
+    auto contract = std::make_shared<SmartContract>("payment_contract_001", ContractType::PAYMENT, "network");
+    deployContract(contract);
+    return contract;
+}
+
+std::shared_ptr<SmartContract> CustomNetwork::getOrCreateEscrowContract() {
+    auto it = contracts.find("escrow_contract_001");
+    if (it != contracts.end()) {
+        return it->second;
+    }
+    
+    auto contract = std::make_shared<SmartContract>("escrow_contract_001", ContractType::ESCROW, "network");
+    deployContract(contract);
+    return contract;
+}
+
+std::shared_ptr<SmartContract> CustomNetwork::getOrCreateMultiSigContract() {
+    auto it = contracts.find("multisig_contract_001");
+    if (it != contracts.end()) {
+        return it->second;
+    }
+    
+    auto contract = std::make_shared<SmartContract>("multisig_contract_001", ContractType::MULTI_SIG, "network");
+    deployContract(contract);
+    return contract;
+}
+
+std::shared_ptr<SmartContract> CustomNetwork::getOrCreateSubscriptionContract() {
+    auto it = contracts.find("subscription_contract_001");
+    if (it != contracts.end()) {
+        return it->second;
+    }
+    
+    auto contract = std::make_shared<SmartContract>("subscription_contract_001", ContractType::SUBSCRIPTION, "network");
+    deployContract(contract);
+    return contract;
+}
+
+std::shared_ptr<SmartContract> CustomNetwork::getOrCreateTokenContract() {
+    auto it = contracts.find("token_contract_001");
+    if (it != contracts.end()) {
+        return it->second;
+    }
+    
+    auto contract = std::make_shared<SmartContract>("token_contract_001", ContractType::TOKEN, "network");
+    
+    // Initialize token contract
+    contract->storage["name"] = "Membra Token";
+    contract->storage["symbol"] = "MEMBRA";
+    contract->storage["decimals"] = 18;
+    contract->storage["total_supply"] = 1000000000;
+    contract->storage["balances"]["network"] = 1000000000;
+    
+    deployContract(contract);
+    return contract;
+}
+
+nlohmann::json CustomNetwork::getNetworkStatus() const {
+    nlohmann::json contract_info = nlohmann::json::object();
+    for (const auto& [addr, contract] : contracts) {
+        contract_info[addr] = {
+            {"type", static_cast<int>(contract->contract_type)},
+            {"state", static_cast<int>(contract->state)},
+            {"creator", contract->creator}
+        };
+    }
+    
+    return nlohmann::json{
+        {"network_id", network_id},
+        {"block_number", block_number},
+        {"transaction_count", transaction_count},
+        {"contract_count", contracts.size()},
+        {"contracts", contract_info}
+    };
 }
 
 } // namespace semantic_transfer

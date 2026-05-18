@@ -83,6 +83,12 @@ pub use semantic_handlers::{
     LinkHandler,
     DomainHandler,
     EndpointHandler,
+    ContractState,
+    ContractType,
+    ContractCall,
+    ContractResult,
+    SmartContract,
+    CustomNetwork,
 };
 
 /// Library version

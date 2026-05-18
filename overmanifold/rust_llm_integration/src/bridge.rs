@@ -734,7 +734,7 @@ mod tests {
 }
 
 fn main() {
-    tracing_subscriber::init();
+    tracing_subscriber::fmt().init();
     
     println!("Rust LLM Custom Membra Bridge System");
 }

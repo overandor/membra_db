@@ -3,6 +3,10 @@ name = "rust_llm_integration"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "semantic_test"
+path = "src/semantic_test.rs"
+
 [dependencies]
 tokio = { version = "1.0", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }

@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cctype>
 #include <openssl/sha.h>
+#include <openssl/rand.h>
 #include <iostream>
 
 namespace llm_integration {

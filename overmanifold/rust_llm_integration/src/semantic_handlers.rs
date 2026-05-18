@@ -8,7 +8,6 @@ use sha2::{Sha256, Digest};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{info, error, debug};
 
 /// Transfer channels
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -669,6 +668,599 @@ impl SemanticTransferHandler {
 impl Default for SemanticTransferHandler {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+// ============================================================================
+// SMART CONTRACT SYSTEM
+// ============================================================================
+
+/// Smart contract states
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum ContractState {
+    #[serde(rename = "deployed")]
+    Deployed,
+    #[serde(rename = "active")]
+    Active,
+    #[serde(rename = "paused")]
+    Paused,
+    #[serde(rename = "terminated")]
+    Terminated,
+}
+
+/// Smart contract types
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum ContractType {
+    #[serde(rename = "token")]
+    Token,
+    #[serde(rename = "payment")]
+    Payment,
+    #[serde(rename = "escrow")]
+    Escrow,
+    #[serde(rename = "multi_sig")]
+    MultiSig,
+    #[serde(rename = "subscription")]
+    Subscription,
+    #[serde(rename = "reward")]
+    Reward,
+}
+
+/// Contract call
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContractCall {
+    pub contract_address: String,
+    pub function_name: String,
+    pub parameters: serde_json::Value,
+    pub caller: String,
+    pub gas_limit: u64,
+    pub gas_price: f64,
+    pub nonce: String,
+    pub timestamp: DateTime<Utc>,
+}
+
+/// Contract execution result
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContractResult {
+    pub success: bool,
+    pub return_value: serde_json::Value,
+    pub gas_used: u64,
+    pub events: Vec<serde_json::Value>,
+    pub error_message: String,
+    pub state_changes: serde_json::Value,
+}
+
+/// Base smart contract
+#[derive(Debug, Clone)]
+pub struct SmartContract {
+    pub address: String,
+    pub contract_type: ContractType,
+    pub creator: String,
+    pub state: ContractState,
+    pub storage: Arc<RwLock<HashMap<String, serde_json::Value>>>,
+    pub code_hash: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: Arc<RwLock<DateTime<Utc>>>,
+}
+
+impl SmartContract {
+    pub fn new(address: String, contract_type: ContractType, creator: String) -> Self {
+        let code_hash = Self::calculate_code_hash(&address, &contract_type);
+        
+        let mut storage = HashMap::new();
+        storage.insert("owner".to_string(), serde_json::Value::String(creator.clone()));
+        storage.insert("balances".to_string(), serde_json::Value::Object(HashMap::new()));
+        storage.insert("allowances".to_string(), serde_json::Value::Object(HashMap::new()));
+        storage.insert("total_supply".to_string(), serde_json::Value::Number(0));
+        storage.insert("nonce".to_string(), serde_json::Value::Number(0));
+        
+        Self {
+            address,
+            contract_type,
+            creator,
+            state: ContractState::Deployed,
+            storage: Arc::new(RwLock::new(storage)),
+            code_hash,
+            created_at: Utc::now(),
+            updated_at: Arc::new(RwLock::new(Utc::now())),
+        }
+    }
+    
+    fn calculate_code_hash(address: &str, contract_type: &ContractType) -> String {
+        let code = format!("{:?}{:?}", address, contract_type);
+        let mut hasher = Sha256::new();
+        hasher.update(code.as_bytes());
+        format!("{:x}", hasher.finalize())
+    }
+    
+    pub async fn execute(&self, call: ContractCall) -> ContractResult {
+        if self.state != ContractState::Active {
+            return ContractResult {
+                success: false,
+                return_value: serde_json::Value::Null,
+                gas_used: 0,
+                events: vec![],
+                error_message: format!("Contract not active. Current state: {:?}", self.state),
+                state_changes: serde_json::Value::Null,
+            };
+        }
+        
+        // Simulate function execution
+        let return_value = match call.function_name.as_str() {
+            "transfer" => self.execute_transfer(&call.parameters).await,
+            "balance_of" => self.execute_balance_of(&call.parameters).await,
+            "approve" => self.execute_approve(&call.parameters).await,
+            "process_payment" => self.execute_process_payment(&call.parameters).await,
+            "create_escrow" => self.execute_create_escrow(&call.parameters).await,
+            "submit_proposal" => self.execute_submit_proposal(&call.parameters).await,
+            "create_subscription" => self.execute_create_subscription(&call.parameters).await,
+            _ => serde_json::Value::String("Unknown function".to_string()),
+        };
+        
+        let gas_used = call.gas_limit;
+        let events = vec![self.generate_event(&call.function_name, &call.parameters, &return_value)];
+        
+        // Update state
+        let mut storage = self.storage.write().await;
+        if let Some(nonce) = storage.get_mut("nonce") {
+            if let serde_json::Value::Number(n) = nonce {
+                *nonce = serde_json::Value::Number(n.as_i64().unwrap_or(0) + 1);
+            }
+        }
+        let mut updated_at = self.updated_at.write().await;
+        *updated_at = Utc::now();
+        
+        ContractResult {
+            success: true,
+            return_value,
+            gas_used,
+            events,
+            error_message: String::new(),
+            state_changes: serde_json::json!({"nonce": storage.get("nonce")}),
+        }
+    }
+    
+    async fn execute_transfer(&self, params: &serde_json::Value) -> serde_json::Value {
+        let to = params["to"].as_str().unwrap_or("unknown");
+        let amount = params["amount"].as_f64().unwrap_or(0.0);
+        
+        let mut storage = self.storage.write().await;
+        
+        // Simple transfer logic
+        let balances = storage.get_mut("balances").unwrap().as_object_mut().unwrap();
+        let from_balance = balances.get(self.creator).unwrap_or(&serde_json::Value::Number(0)).as_f64().unwrap_or(0.0);
+        
+        if from_balance < amount {
+            return serde_json::json!({"error": "Insufficient balance"});
+        }
+        
+        let to_balance = balances.get(to).unwrap_or(&serde_json::Value::Number(0)).as_f64().unwrap_or(0.0);
+        
+        balances.insert(self.creator.clone(), serde_json::Value::Number(from_balance - amount));
+        balances.insert(to.to_string(), serde_json::Value::Number(to_balance + amount));
+        
+        serde_json::json!({"success": true, "from_balance": from_balance - amount, "to_balance": to_balance + amount})
+    }
+    
+    async fn execute_balance_of(&self, params: &serde_json::Value) -> serde_json::Value {
+        let account = params["account"].as_str().unwrap_or("unknown");
+        
+        let storage = self.storage.read().await;
+        let balances = storage.get("balances").unwrap().as_object().unwrap();
+        let balance = balances.get(account).unwrap_or(&serde_json::Value::Number(0)).as_f64().unwrap_or(0.0);
+        
+        serde_json::json!({"balance": balance})
+    }
+    
+    async fn execute_approve(&self, params: &serde_json::Value) -> serde_json::Value {
+        let spender = params["spender"].as_str().unwrap_or("unknown");
+        let amount = params["amount"].as_f64().unwrap_or(0.0);
+        
+        let mut storage = self.storage.write().await;
+        let allowances = storage.get_mut("allowances").unwrap().as_object_mut().unwrap();
+        
+        let owner_allowances = allowances.entry(self.creator.clone()).or_insert_with(HashMap::new);
+        owner_allowances.insert(spender.to_string(), serde_json::Value::Number(amount));
+        
+        serde_json::json!({"success": true, "spender": spender, "amount": amount})
+    }
+    
+    async fn execute_process_payment(&self, params: &serde_json::Value) -> serde_json::Value {
+        let payload: TransferPayload = serde_json::from_value(params["payload"].clone()).unwrap();
+        
+        if payload.semantic_value.amount <= 0.0 {
+            return serde_json::json!({"error": "Invalid amount"});
+        }
+        
+        if let Some(expires_at) = payload.semantic_value.expires_at {
+            if expires_at < Utc::now() {
+                return serde_json::json!({"error": "Payment expired"});
+            }
+        }
+        
+        let mut storage = self.storage.write().await;
+        let payment_count = storage.get("payment_count").unwrap_or(&serde_json::Value::Number(0)).as_i64().unwrap_or(0);
+        let total_volume = storage.get("total_volume").unwrap_or(&serde_json::Value::Number(0.0)).as_f64().unwrap_or(0.0);
+        
+        storage.insert("payment_count".to_string(), serde_json::Value::Number(payment_count + 1));
+        storage.insert("total_volume".to_string(), serde_json::Value::Number(total_volume + payload.semantic_value.amount));
+        
+        serde_json::json!({"success": true, "payment_count": payment_count + 1})
+    }
+    
+    async fn execute_create_escrow(&self, params: &serde_json::Value) -> serde_json::Value {
+        let payload: TransferPayload = serde_json::from_value(params["payload"].clone()).unwrap();
+        let conditions: Vec<String> = serde_json::from_value(params["conditions"].clone()).unwrap_or_default();
+        
+        let mut storage = self.storage.write().await;
+        let escrow_count = storage.get("escrow_count").unwrap_or(&serde_json::Value::Number(0)).as_i64().unwrap_or(0);
+        
+        let escrow_id = format!("escrow_{}", escrow_count + 1);
+        
+        let escrow_data = serde_json::json!({
+            "payload": payload.to_dict(),
+            "conditions": conditions,
+            "status": "pending",
+            "created_at": Utc::now().to_rfc3339(),
+            "released_at": serde_json::Value::Null,
+            "refunded_at": serde_json::Value::Null
+        });
+        
+        let escrows = storage.entry("escrows".to_string()).or_insert_with(serde_json::Value::Object);
+        if let Some(escrows_map) = escrows.as_object_mut() {
+            escrows_map.insert(escrow_id.clone(), escrow_data);
+        }
+        
+        storage.insert("escrow_count".to_string(), serde_json::Value::Number(escrow_count + 1));
+        
+        serde_json::json!({"success": true, "escrow_id": escrow_id})
+    }
+    
+    async fn execute_submit_proposal(&self, params: &serde_json::Value) -> serde_json::Value {
+        let payload: TransferPayload = serde_json::from_value(params["payload"].clone()).unwrap();
+        let proposer = params["proposer"].as_str().unwrap_or("unknown");
+        
+        let mut storage = self.storage.write().await;
+        let proposal_count = storage.get("proposal_count").unwrap_or(&serde_json::Value::Number(0)).as_i64().unwrap_or(0);
+        
+        let proposal_id = format!("proposal_{}", proposal_count + 1);
+        
+        let proposal_data = serde_json::json!({
+            "payload": payload.to_dict(),
+            "proposer": proposer,
+            "approvals": vec![],
+            "executed": false,
+            "created_at": Utc::now().to_rfc3339()
+        });
+        
+        let proposals = storage.entry("proposals".to_string()).or_insert_with(serde_json::Value::Object);
+        if let Some(proposals_map) = proposals.as_object_mut() {
+            proposals_map.insert(proposal_id.clone(), proposal_data);
+        }
+        
+        storage.insert("proposal_count".to_string(), serde_json::Value::Number(proposal_count + 1));
+        
+        serde_json::json!({"success": true, "proposal_id": proposal_id})
+    }
+    
+    async fn execute_create_subscription(&self, params: &serde_json::Value) -> serde_json::Value {
+        let subscriber = params["subscriber"].as_str().unwrap_or("unknown");
+        let amount = params["amount"].as_f64().unwrap_or(0.0);
+        let interval_days = params["interval_days"].as_i64().unwrap_or(30);
+        
+        let mut storage = self.storage.write().await;
+        let sub_count = storage.get("subscription_count").unwrap_or(&serde_json::Value::Number(0)).as_i64().unwrap_or(0);
+        
+        let subscription_id = format!("sub_{}", sub_count + 1);
+        
+        let subscription_data = serde_json::json!({
+            "subscriber": subscriber,
+            "amount": amount,
+            "interval_days": interval_days,
+            "next_payment": (Utc::now() + Duration::days(interval_days)).to_rfc3339(),
+            "active": true,
+            "created_at": Utc::now().to_rfc3339()
+        });
+        
+        let subscriptions = storage.entry("subscriptions".to_string()).or_insert_with(serde_json::Value::Object);
+        if let Some(subs_map) = subscriptions.as_object_mut() {
+            subs_map.insert(subscription_id.clone(), subscription_data);
+        }
+        
+        storage.insert("subscription_count".to_string(), serde_json::Value::Number(sub_count + 1));
+        
+        serde_json::json!({"success": true, "subscription_id": subscription_id})
+    }
+    
+    fn generate_event(&self, function_name: &str, parameters: &serde_json::Value, result: &serde_json::Value) -> serde_json::Value {
+        serde_json::json!({
+            "event_type": format!("{}::{}", self.contract_type, function_name),
+            "contract_address": self.address,
+            "timestamp": Utc::now().to_rfc3339(),
+            "parameters": parameters,
+            "result": result
+        })
+    }
+}
+
+/// Custom network for managing smart contracts
+pub struct CustomNetwork {
+    pub network_id: String,
+    pub contracts: Arc<RwLock<HashMap<String, SmartContract>>>,
+    pub block_number: Arc<RwLock<u64>>,
+    pub transaction_count: Arc<RwLock<u64>>,
+    pub semantic_handler: SemanticTransferHandler,
+}
+
+impl CustomNetwork {
+    pub fn new(network_id: String) -> Self {
+        Self {
+            network_id,
+            contracts: Arc::new(RwLock::new(HashMap::new())),
+            block_number: Arc::new(RwLock::new(0)),
+            transaction_count: Arc::new(RwLock::new(0)),
+            semantic_handler: SemanticTransferHandler::new(),
+        }
+    }
+    
+    pub async fn deploy_contract(&self, contract: SmartContract) -> String {
+        let address = contract.address.clone();
+        contract.state = ContractState::Active;
+        
+        let mut contracts = self.contracts.write().await;
+        contracts.insert(address.clone(), contract);
+        
+        let mut block_number = self.block_number.write().await;
+        *block_number += 1;
+        
+        address
+    }
+    
+    pub async fn execute_contract(&self, call: ContractCall) -> ContractResult {
+        let contracts = self.contracts.read().await;
+        let contract = contracts.get(&call.contract_address);
+        
+        match contract {
+            Some(contract) => {
+                let result = contract.execute(call).await;
+                if result.success {
+                    let mut tx_count = self.transaction_count.write().await;
+                    *tx_count += 1;
+                }
+                result
+            }
+            None => ContractResult {
+                success: false,
+                return_value: serde_json::Value::Null,
+                gas_used: 0,
+                events: vec![],
+                error_message: "Contract not found".to_string(),
+                state_changes: serde_json::Value::Null,
+            }
+        }
+    }
+    
+    pub async fn process_semantic_transfer(&self, payload: TransferPayload) -> ContractResult {
+        match payload.semantic_value.semantic_type {
+            SemanticType::Payment => self._process_payment(payload).await,
+            SemanticType::Escrow => self._process_escrow(payload).await,
+            SemanticType::MultiSig => self._process_multi_sig(payload).await,
+            SemanticType::Subscription => self._process_subscription(payload).await,
+            _ => self._process_generic_transfer(payload).await,
+        }
+    }
+    
+    async fn _process_payment(&self, payload: TransferPayload) -> ContractResult {
+        let payment_contract = self._get_or_create_payment_contract().await;
+        
+        let call = ContractCall {
+            contract_address: payment_contract.address,
+            function_name: "process_payment".to_string(),
+            parameters: serde_json::json!({"payload": payload.to_dict()}),
+            caller: payload.semantic_value.sender.clone(),
+            gas_limit: 21000,
+            gas_price: 0.00001,
+            nonce: payload.nonce.clone(),
+            timestamp: Utc::now(),
+        };
+        
+        self.execute_contract(call).await
+    }
+    
+    async fn _process_escrow(&self, payload: TransferPayload) -> ContractResult {
+        let escrow_contract = self._get_or_create_escrow_contract().await;
+        
+        let call = ContractCall {
+            contract_address: escrow_contract.address,
+            function_name: "create_escrow".to_string(),
+            parameters: serde_json::json!({
+                "payload": payload.to_dict(),
+                "conditions": payload.semantic_value.conditions
+            }),
+            caller: payload.semantic_value.sender.clone(),
+            gas_limit: 21000,
+            gas_price: 0.00001,
+            nonce: payload.nonce.clone(),
+            timestamp: Utc::now(),
+        };
+        
+        self.execute_contract(call).await
+    }
+    
+    async fn _process_multi_sig(&self, payload: TransferPayload) -> ContractResult {
+        let multi_sig_contract = self._get_or_create_multi_sig_contract().await;
+        
+        let call = ContractCall {
+            contract_address: multi_sig_contract.address,
+            function_name: "submit_proposal".to_string(),
+            parameters: serde_json::json!({
+                "payload": payload.to_dict(),
+                "proposer": payload.semantic_value.sender
+            }),
+            caller: payload.semantic_value.sender.clone(),
+            gas_limit: 21000,
+            gas_price: 0.01,
+            nonce: payload.nonce.clone(),
+            timestamp: Utc::now(),
+        };
+        
+        self.execute_contract(call).await
+    }
+    
+    async fn _process_subscription(&self, payload: TransferPayload) -> ContractResult {
+        let subscription_contract = self._get_or_create_subscription_contract().await;
+        
+        let call = ContractCall {
+            contract_address: subscription_contract.address,
+            function_name: "create_subscription".to_string(),
+            parameters: serde_json::json!({
+                "subscriber": payload.semantic_value.recipient,
+                "amount": payload.semantic_value.amount,
+                "interval_days": 30
+            }),
+            caller: payload.semantic_value.sender.clone(),
+            gas_limit: 21000,
+            gas_price: 0.00001,
+            nonce: payload.nonce.clone(),
+            timestamp: Utc::now(),
+        };
+        
+        self.execute_contract(call).await
+    }
+    
+    async fn _process_generic_transfer(&self, payload: TransferPayload) -> ContractResult {
+        let token_contract = self._get_or_create_token_contract().await;
+        
+        let call = ContractCall {
+            contract_address: token_contract.address,
+            function_name: "transfer".to_string(),
+            parameters: serde_json::json!({
+                "to": payload.semantic_value.recipient,
+                "amount": payload.semantic_value.amount
+            }),
+            caller: payload.semantic_value.sender.clone(),
+            gas_limit: 21000,
+            gas_price: 0.00001,
+            nonce: payload.nonce.clone(),
+            timestamp: Utc::now(),
+        };
+        
+        self.execute_contract(call).await
+    }
+    
+    async fn _get_or_create_payment_contract(&self) -> SmartContract {
+        let contracts = self.contracts.read().await;
+        if let Some(contract) = contracts.get("payment_contract_001") {
+            return contract.clone();
+        }
+        
+        let token_contract = self._get_or_create_token_contract().await;
+        let contract = SmartContract::new(
+            "payment_contract_001".to_string(),
+            ContractType::Payment,
+            "network".to_string(),
+        );
+        self.deploy_contract(contract).await;
+        contract
+    }
+    
+    async fn _get_or_create_escrow_contract(&self) -> SmartContract {
+        let contracts = self.contracts.read().await;
+        if let Some(contract) = contracts.get("escrow_contract_001") {
+            return contract.clone();
+        }
+        
+        let contract = SmartContract::new(
+            "escrow_contract_001".to_string(),
+            ContractType::Escrow,
+            "network".to_string(),
+        );
+        self.deploy_contract(contract).await;
+        contract
+    }
+    
+    async fn _get_or_create_multi_sig_contract(&self) -> SmartContract {
+        let contracts = self.contracts.read().await;
+        if let Some(contract) = contracts.get("multisig_contract_001") {
+            return contract.clone();
+        }
+        
+        let contract = SmartContract::new(
+            "multisig_contract_001".to_string(),
+            ContractType::MultiSig,
+            "network".to_string(),
+        );
+        self.deploy_contract(contract).await;
+        contract
+    }
+    
+    async fn _get_or_create_subscription_contract(&self) -> SmartContract {
+        let contracts = self.contracts.read().await;
+        if let Some(contract) = contracts.get("subscription_contract_001") {
+            return contract.clone();
+        }
+        
+        let contract = SmartContract::new(
+            "subscription_contract_001".to_string(),
+            ContractType::Subscription,
+            "network".to_string(),
+        );
+        self.deploy_contract(contract).await;
+        contract
+    }
+    
+    async fn _get_or_create_token_contract(&self) -> SmartContract {
+        let contracts = self.contracts.read().await;
+        if let Some(contract) = contracts.get("token_contract_001") {
+            return contract.clone();
+        }
+        
+        let contract = SmartContract::new(
+            "token_contract_001".to_string(),
+            ContractType::Token,
+            "network".to_string(),
+        );
+        
+        // Initialize with initial supply
+        let mut storage = contract.storage.write().await;
+        storage.insert("name".to_string(), serde_json::Value::String("Membra Token".to_string()));
+        storage.insert("symbol".to_string(), serde_json::Value::String("MEMBRA".to_string()));
+        storage.insert("decimals".to_string(), serde_json::Value::Number(18));
+        storage.insert("total_supply".to_string(), serde_json::Value::Number(1000000000));
+        
+        let balances = storage.get_mut("balances").unwrap().as_object_mut().unwrap();
+        balances.insert("network".to_string(), serde_json::Value::Number(1000000000));
+        
+        self.deploy_contract(contract).await;
+        contract
+    }
+    
+    pub async fn get_network_status(&self) -> serde_json::Value {
+        let contracts = self.contracts.read().await;
+        let block_number = *self.block_number.read().await;
+        let transaction_count = *self.transaction_count.read().await;
+        
+        let contract_info: HashMap<String, serde_json::Value> = contracts
+            .iter()
+            .map(|(addr, contract)| {
+                (
+                    addr.clone(),
+                    serde_json::json!({
+                        "type": contract.contract_type,
+                        "state": contract.state,
+                        "creator": contract.creator,
+                        "created_at": contract.created_at.to_rfc3339()
+                    })
+                )
+            })
+            .collect();
+        
+        serde_json::json!({
+            "network_id": self.network_id,
+            "block_number": block_number,
+            "transaction_count": transaction_count,
+            "contract_count": contracts.len(),
+            "contracts": contract_info
+        })
     }
 }
 

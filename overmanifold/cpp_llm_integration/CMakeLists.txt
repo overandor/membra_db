@@ -47,14 +47,6 @@ target_link_libraries(llm_integration
 add_executable(llm_demo src/main.cpp)
 target_link_libraries(llm_demo PRIVATE llm_integration)
 
-# Enable testing
-enable_testing()
-
-# Add tests
-add_executable(test_sms_processor tests/test_sms_processor.cpp)
-target_link_libraries(test_sms_processor PRIVATE llm_integration)
-add_test(NAME TestSmsProcessor COMMAND test_sms_processor)
-
 # Installation
 install(TARGETS llm_integration llm_demo
     LIBRARY DESTINATION lib

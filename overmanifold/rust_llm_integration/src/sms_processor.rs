@@ -391,7 +391,7 @@ mod tests {
 }
 
 fn main() {
-    tracing_subscriber::init();
+    tracing_subscriber::fmt().init();
     
     let processor = LlmSmsProcessor::from_env();
     let health = processor.get_system_health();

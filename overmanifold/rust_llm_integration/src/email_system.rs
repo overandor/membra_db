@@ -17,7 +17,7 @@ use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 /// Email delivery methods
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum EmailDeliveryMethod {
     Smtp,
@@ -720,7 +720,7 @@ mod tests {
 }
 
 fn main() {
-    tracing_subscriber::init();
+    tracing_subscriber::fmt().init();
     
     let email_system = LlmCustomEmailSystem::from_env();
     let stats = email_system.get_email_statistics();

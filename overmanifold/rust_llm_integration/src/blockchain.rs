@@ -758,7 +758,7 @@ mod tests {
 }
 
 fn main() {
-    tracing_subscriber::init();
+    tracing_subscriber::fmt().init();
     
     println!("Rust LLM Custom Blockchain System");
     println!("Chain ID: overmanifold-1");
