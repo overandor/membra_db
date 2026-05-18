@@ -87,6 +87,8 @@ class MembraL0Client:
         self.rpc_url = rpc_url
         self.local_mirs: Dict[str, MIR] = {}
         self.local_mcrs: Dict[str, MCR] = {}
+        self.local_m5_nodes: Dict[str, M5NodeClaim] = {}
+        self.local_mtps: Dict[str, Dict[str, Any]] = {}
 
     def create_mir(
         self,
@@ -140,6 +142,76 @@ class MembraL0Client:
         )
         self.local_mcrs[mcr.mcr_id] = mcr
         return mcr
+
+    def register_m5_node(
+        self,
+        node_id: str,
+        authority: str,
+        hardware_summary: str,
+        model_manifest_summary: str,
+        stake_score: int,
+    ) -> M5NodeClaim:
+        node = M5NodeClaim(
+            node_id=node_id,
+            authority=authority,
+            hardware_hash=sha256_text(hardware_summary),
+            model_manifest_hash=sha256_text(model_manifest_summary),
+            stake_score=stake_score,
+        )
+        self.local_m5_nodes[node.node_id] = node
+        return node
+
+    def create_mtp(
+        self,
+        user_wallet: str,
+        action_type: str = "sponsored",
+        expiry_slots: int = 150,
+    ) -> Dict[str, Any]:
+        mtp_id = "mtp_" + uuid.uuid4().hex
+        mtp = {
+            "mtp_id": mtp_id,
+            "user_wallet": user_wallet,
+            "action_type": action_type,
+            "expiry_slots": expiry_slots,
+            "created_at": int(time.time()),
+            "consumed": False,
+        }
+        self.local_mtps[mtp_id] = mtp
+        return mtp
+
+    def prepare_sponsored_transaction(
+        self,
+        inner_payload: Dict[str, Any],
+        sponsor_wallet: str,
+    ) -> Dict[str, Any]:
+        mtp = self.create_mtp(sponsor_wallet, action_type="sponsored")
+        return {
+            "mtp": mtp,
+            "inner_payload": inner_payload,
+            "sponsor": sponsor_wallet,
+            "network": MEMBRA_NETWORK,
+            "cluster": "solana-devnet",
+        }
+
+    def anchor_proof_to_solana(self, proof_root: str, object_type: str) -> Dict[str, Any]:
+        return {
+            "program_id": "MEMBRA_MIR_PROGRAM_ID",
+            "instruction": "anchorProof",
+            "proof_hash": proof_root,
+            "object_type": object_type,
+            "anchor": True,
+            "network": MEMBRA_NETWORK,
+        }
+
+    def export_proof_page_payload(self, object_root: str, object_type: str) -> Dict[str, Any]:
+        return {
+            "network": MEMBRA_NETWORK,
+            "cluster": "solana-devnet",
+            "object_type": object_type,
+            "object_root": object_root,
+            "timestamp": int(time.time()),
+            "verified": False,
+        }
 
     def prepare_solana_payload(self, obj: Any) -> Dict[str, Any]:
         """

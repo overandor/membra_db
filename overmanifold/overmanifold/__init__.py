@@ -26,7 +26,8 @@ from overmanifold.governance.llm_engine import (
     TaskPriority,
     TaskStatus,
     LLMProvider,
-    MockLLMProvider
+    OpenAIProvider,
+    AnthropicProvider
 )
 
 from overmanifold.routing.geodesic import (
@@ -75,7 +76,8 @@ __all__ = [
     'TaskPriority',
     'TaskStatus',
     'LLMProvider',
-    'MockLLMProvider',
+    'OpenAIProvider',
+    'AnthropicProvider',
     
     # Geodesic Routing
     'GeodesicRouter',

@@ -5,6 +5,7 @@ Interprets human intent into structured economic tasks and resolves semantic amb
 
 import asyncio
 import logging
+import os
 from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta
@@ -661,9 +662,19 @@ class LLMGovernanceEngine:
 
 
 async def main():
-    """Example usage of LLM Governance Engine"""
-    # Create LLM provider and governance engine
-    llm_provider = MockLLMProvider()
+    """Example usage of LLM Governance Engine with real providers"""
+    # Create real LLM provider and governance engine
+    import os
+    
+    llm_api_key = os.getenv("OPENAI_API_KEY") or os.getenv("ANTHROPIC_API_KEY")
+    if not llm_api_key:
+        raise ValueError("LLM_API_KEY environment variable must be set")
+    
+    if os.getenv("ANTHROPIC_API_KEY"):
+        llm_provider = AnthropicProvider(llm_api_key)
+    else:
+        llm_provider = OpenAIProvider(llm_api_key)
+    
     governance_engine = LLMGovernanceEngine(llm_provider)
     
     # Interpret some human intents

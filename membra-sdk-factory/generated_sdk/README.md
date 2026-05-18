@@ -11,8 +11,8 @@ Generated from `membra.network.json`.
 
 ## Generated clients
 
-- `membra_solana_sdk.ts` 
-- `membra_l0_sdk.py` 
+- `membra_solana_sdk.ts`
+- `membra_l0_sdk.py`
 
 ## Primitive flow
 
