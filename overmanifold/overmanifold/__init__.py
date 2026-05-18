@@ -81,6 +81,19 @@ from overmanifold.membra_integration.unified_free_payment_api import (
     PaymentMethod
 )
 
+# Dashboard and monitoring
+from overmanifold.membra_integration.dashboard import app
+from overmanifold.membra_integration.monitoring import sms_monitoring, TransactionLog, MetricType, AlertSeverity
+from overmanifold.membra_integration.oracle_integration import MembraOracleIntegration, OracleEndpoint
+
+# SMS transaction processing
+from overmanifold.membra_integration.sms_transaction_processor import (
+    SMSTransactionProcessor, 
+    SMSMessage, 
+    TransactionContext, 
+    TransactionState
+)
+
 __version__ = "0.1.0"
 __author__ = "Overmanifold Protocol Foundation"
 
@@ -144,5 +157,20 @@ __all__ = [
     'UnifiedFreePaymentAPI',
     'FreePaymentRequest',
     'FreePaymentResponse',
-    'PaymentMethod'
+    'PaymentMethod',
+    
+    # Dashboard and monitoring
+    'app',
+    'sms_monitoring',
+    'TransactionLog',
+    'MetricType',
+    'AlertSeverity',
+    'MembraOracleIntegration',
+    'OracleEndpoint',
+    
+    # SMS transaction processing
+    'SMSTransactionProcessor',
+    'SMSMessage',
+    'TransactionContext',
+    'TransactionState'
 ]
