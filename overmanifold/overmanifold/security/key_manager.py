@@ -8,10 +8,12 @@ import json
 import logging
 from typing import Dict, Optional, Any
 from pathlib import Path
+from datetime import datetime
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 import base64
+import secrets
 
 from overmanifold.infrastructure.logging_config import get_logger
 
@@ -36,6 +38,11 @@ class KeyManager:
             raise ValueError("KEY_MANAGER_PASSWORD environment variable must be set")
         
         self.key_file = os.getenv("KEY_FILE_PATH", "keys.enc")
+        self.salt_file = os.getenv("SALT_FILE_PATH", "salt.bin")
+        
+        # Generate or load salt
+        self.salt = self._load_or_generate_salt()
+        
         self.cipher_suite = self._create_cipher_suite()
         self.keys: Dict[str, str] = {}
         
@@ -46,15 +53,41 @@ class KeyManager:
     def _create_cipher_suite(self) -> Fernet:
         """Create encryption cipher suite from master password"""
         password_bytes = self.master_password.encode()
-        salt = b'overmanifold_salt'  # In production, use random salt
         kdf = PBKDF2HMAC(
             algorithm=hashes.SHA256(),
             length=32,
-            salt=salt,
+            salt=self.salt,
             iterations=100000,
         )
         key = base64.urlsafe_b64encode(kdf.derive(password_bytes))
         return Fernet(key)
+    
+    def _load_or_generate_salt(self) -> bytes:
+        """Load existing salt or generate new cryptographically secure salt"""
+        if os.path.exists(self.salt_file):
+            try:
+                with open(self.salt_file, 'rb') as f:
+                    salt = f.read()
+                if len(salt) == 16:  # Validate salt length
+                    logger.info("Loaded existing salt from file")
+                    return salt
+                else:
+                    logger.warning("Invalid salt length, generating new salt")
+            except Exception as e:
+                logger.error(f"Failed to load salt: {e}, generating new salt")
+        
+        # Generate new cryptographically secure salt
+        salt = secrets.token_bytes(16)  # 16 bytes (128 bits) for PBKDF2
+        try:
+            with open(self.salt_file, 'wb') as f:
+                f.write(salt)
+            # Set restrictive permissions
+            os.chmod(self.salt_file, 0o600)
+            logger.info("Generated and saved new cryptographically secure salt")
+        except Exception as e:
+            logger.error(f"Failed to save salt: {e}")
+        
+        return salt
     
     def _load_keys(self) -> None:
         """Load encrypted keys from storage"""
@@ -241,6 +274,219 @@ class KeyManager:
             validation_results[key_name] = self.get_key(key_name) is not None
         
         return validation_results
+    
+    def rotate_key(self, key_name: str, new_key_value: str, backup_old: bool = True) -> bool:
+        """
+        Rotate a key with optional backup of old value
+        
+        Args:
+            key_name: Name of the key to rotate
+            new_key_value: New key value
+            backup_old: Whether to backup the old key value
+            
+        Returns:
+            True if rotation successful, False otherwise
+        """
+        old_key_value = self.get_key(key_name)
+        
+        if old_key_value and backup_old:
+            # Backup old key with timestamp
+            backup_key_name = f"{key_name}_backup_{int(datetime.now().timestamp())}"
+            self.set_key(backup_key_name, old_key_value)
+            logger.info(f"Backed up old key as: {backup_key_name}")
+        
+        # Set new key
+        self.set_key(key_name, new_key_value)
+        logger.info(f"Rotated key: {key_name}")
+        
+        return True
+    
+    def rotate_all_keys(self) -> Dict[str, bool]:
+        """
+        Rotate all keys with new random values where applicable
+        Note: This should be used with caution as it invalidates all existing keys
+        
+        Returns:
+            Dictionary mapping key names to rotation success status
+        """
+        rotation_results = {}
+        
+        for key_name in list(self.keys.keys()):
+            try:
+                # For API keys, this would require calling the respective services
+                # For now, we'll just mark them as needing manual rotation
+                if key_name.endswith("_api_key"):
+                    logger.warning(f"API key {key_name} requires manual rotation through service provider")
+                    rotation_results[key_name] = False
+                elif key_name.endswith("_private_key"):
+                    # Generate new private key (simplified - in production use proper key generation)
+                    new_key = secrets.token_hex(32)
+                    self.rotate_key(key_name, new_key)
+                    rotation_results[key_name] = True
+                else:
+                    rotation_results[key_name] = False
+            except Exception as e:
+                logger.error(f"Failed to rotate key {key_name}: {e}")
+                rotation_results[key_name] = False
+        
+        return rotation_results
+    
+    def get_key_metadata(self, key_name: str) -> Dict[str, Any]:
+        """
+        Get metadata about a key (rotation history, age, etc.)
+        
+        Args:
+            key_name: Name of the key
+            
+        Returns:
+            Dictionary with key metadata
+        """
+        metadata = {
+            "exists": key_name in self.keys,
+            "has_backup": any(k.startswith(f"{key_name}_backup_") for k in self.keys.keys()),
+            "backup_count": sum(1 for k in self.keys.keys() if k.startswith(f"{key_name}_backup_"))
+        }
+        
+        return metadata
+
+
+class HSMKeyManager(KeyManager):
+    """
+    HSM-backed key manager for production use
+    Provides hardware security module integration for enhanced key protection
+    """
+    
+    def __init__(self, master_password: Optional[str] = None, hsm_config: Optional[Dict] = None):
+        """
+        Initialize HSM-backed key manager
+        
+        Args:
+            master_password: Master password for encryption (fallback if HSM unavailable)
+            hsm_config: HSM configuration dictionary
+        """
+        super().__init__(master_password)
+        self.hsm_config = hsm_config or {}
+        self.hsm_available = self._initialize_hsm()
+        
+        if not self.hsm_available:
+            logger.warning("HSM not available, falling back to software encryption")
+    
+    def _initialize_hsm(self) -> bool:
+        """
+        Initialize HSM connection
+        
+        Returns:
+            True if HSM available, False otherwise
+        """
+        try:
+            # Check for HSM library availability
+            # This would typically use libraries like:
+            # - PyKCS11 for PKCS#11 HSMs
+            # - aws-kms for AWS CloudHSM
+            # - azure-keyvault for Azure Dedicated HSM
+            # - google-cloud-kms for Google Cloud HSM
+            
+            hsm_type = self.hsm_config.get("type", "pkcs11")
+            
+            if hsm_type == "pkcs11":
+                # Placeholder for PKCS#11 HSM initialization
+                # from PyKCS11 import PyKCS11
+                # lib = PyKCS11.load_lib(self.hsm_config.get("library_path"))
+                # self.hsm_slot = self.hsm_config.get("slot")
+                # self.hsm_pin = self.hsm_config.get("pin")
+                logger.info("PKCS#11 HSM support configured but not implemented")
+                return False
+            
+            elif hsm_type == "aws_kms":
+                # Placeholder for AWS KMS initialization
+                # import boto3
+                # self.kms_client = boto3.client('kms')
+                logger.info("AWS KMS support configured but not implemented")
+                return False
+            
+            elif hsm_type == "azure_keyvault":
+                # Placeholder for Azure Key Vault initialization
+                # from azure.identity import DefaultAzureCredential
+                # from azure.keyvault.secrets import SecretClient
+                logger.info("Azure Key Vault support configured but not implemented")
+                return False
+            
+            elif hsm_type == "google_cloud_kms":
+                # Placeholder for Google Cloud KMS initialization
+                # from google.cloud import kms
+                logger.info("Google Cloud KMS support configured but not implemented")
+                return False
+            
+            else:
+                logger.warning(f"Unknown HSM type: {hsm_type}")
+                return False
+                
+        except ImportError as e:
+            logger.warning(f"HSM library not available: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"HSM initialization failed: {e}")
+            return False
+    
+    def set_key_hsm(self, key_name: str, key_value: str, hsm_protected: bool = True) -> None:
+        """
+        Store a key with HSM protection
+        
+        Args:
+            key_name: Name/identifier for the key
+            key_value: The actual key value
+            hsm_protected: Whether to use HSM protection (default True)
+        """
+        if hsm_protected and self.hsm_available:
+            # Store key in HSM
+            self._store_key_in_hsm(key_name, key_value)
+        else:
+            # Fall back to software encryption
+            self.set_key(key_name, key_value)
+    
+    def _store_key_in_hsm(self, key_name: str, key_value: str) -> None:
+        """
+        Store key in HSM (placeholder implementation)
+        
+        Args:
+            key_name: Name of the key
+            key_value: Key value to store
+        """
+        # This would implement actual HSM key storage
+        # Example for PKCS#11:
+        # self.hsm_session.generateKey(key_template)
+        logger.warning("HSM key storage not implemented, using fallback")
+        self.set_key(key_name, key_value)
+    
+    def get_key_hsm(self, key_name: str, hsm_protected: bool = True) -> Optional[str]:
+        """
+        Retrieve a key from HSM
+        
+        Args:
+            key_name: Name/identifier for the key
+            hsm_protected: Whether to use HSM protection (default True)
+            
+        Returns:
+            The key value or None if not found
+        """
+        if hsm_protected and self.hsm_available:
+            return self._get_key_from_hsm(key_name)
+        else:
+            return self.get_key(key_name)
+    
+    def _get_key_from_hsm(self, key_name: str) -> Optional[str]:
+        """
+        Retrieve key from HSM (placeholder implementation)
+        
+        Args:
+            key_name: Name of the key
+            
+        Returns:
+            Key value or None
+        """
+        # This would implement actual HSM key retrieval
+        logger.warning("HSM key retrieval not implemented, using fallback")
+        return self.get_key(key_name)
 
 
 def create_production_key_manager() -> KeyManager:

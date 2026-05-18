@@ -57,6 +57,12 @@ class RealWebGPUValidator:
     Performs parallel cryptographic computations on GPU
     """
     
+    # Security limits
+    MAX_SHADER_CODE_SIZE = 1024 * 1024  # 1MB
+    MAX_BUFFER_SIZE = 256 * 1024 * 1024  # 256MB
+    MAX_COMPUTE_PASS_COUNT = 1000
+    MAX_INPUT_DATA_SIZE = 16 * 1024 * 1024  # 16MB
+    
     def __init__(self, preferred_adapter: Optional[str] = None):
         """
         Initialize real WebGPU validator
@@ -146,8 +152,52 @@ class RealWebGPUValidator:
         start_time = datetime.utcnow()
         
         try:
+            # Input validation
             if not self.loaded:
                 raise WebGPUValidationError("WebGPU not initialized")
+            
+            # Validate leaf_hash format
+            if not leaf_hash or not isinstance(leaf_hash, str):
+                raise WebGPUValidationError("Invalid leaf hash format")
+            
+            try:
+                leaf_bytes = bytes.fromhex(leaf_hash)
+                if len(leaf_bytes) != 32:  # Standard hash size
+                    raise WebGPUValidationError(f"Invalid leaf hash length: {len(leaf_bytes)} (expected 32)")
+            except ValueError:
+                raise WebGPUValidationError("Invalid leaf hash hex encoding")
+            
+            # Validate expected_root format
+            if not expected_root or not isinstance(expected_root, str):
+                raise WebGPUValidationError("Invalid expected root format")
+            
+            try:
+                root_bytes = bytes.fromhex(expected_root)
+                if len(root_bytes) != 32:
+                    raise WebGPUValidationError(f"Invalid root hash length: {len(root_bytes)} (expected 32)")
+            except ValueError:
+                raise WebGPUValidationError("Invalid root hash hex encoding")
+            
+            # Validate proof_path
+            if not isinstance(proof_path, list):
+                raise WebGPUValidationError("Invalid proof path format")
+            
+            if len(proof_path) > 64:  # Reasonable limit
+                raise WebGPUValidationError(f"Proof path too long: {len(proof_path)} (max 64)")
+            
+            for i, (sibling_hash, is_left) in enumerate(proof_path):
+                if not isinstance(sibling_hash, str):
+                    raise WebGPUValidationError(f"Invalid sibling hash at index {i}")
+                
+                try:
+                    sibling_bytes = bytes.fromhex(sibling_hash)
+                    if len(sibling_bytes) != 32:
+                        raise WebGPUValidationError(f"Invalid sibling hash length at index {i}")
+                except ValueError:
+                    raise WebGPUValidationError(f"Invalid sibling hash hex encoding at index {i}")
+                
+                if not isinstance(is_left, bool):
+                    raise WebGPUValidationError(f"Invalid is_left value at index {i}")
             
             # Prepare compute shader for Merkle proof validation
             shader_code = self._get_merkle_validation_shader()
@@ -500,11 +550,33 @@ class RealWebGPUValidator:
         expected_root: str
     ) -> bytes:
         """Prepare Merkle data for GPU consumption"""
+        # Input validation
+        if not leaf_hash or not isinstance(leaf_hash, str):
+            raise WebGPUValidationError("Invalid leaf hash format")
+        
+        try:
+            leaf_bytes = bytes.fromhex(leaf_hash)
+            if len(leaf_bytes) != 32:
+                raise WebGPUValidationError(f"Invalid leaf hash length: {len(leaf_bytes)}")
+        except ValueError:
+            raise WebGPUValidationError("Invalid leaf hash hex encoding")
+        
+        if not expected_root or not isinstance(expected_root, str):
+            raise WebGPUValidationError("Invalid expected root format")
+        
+        try:
+            root_bytes = bytes.fromhex(expected_root)
+            if len(root_bytes) != 32:
+                raise WebGPUValidationError(f"Invalid root hash length: {len(root_bytes)}")
+        except ValueError:
+            raise WebGPUValidationError("Invalid root hash hex encoding")
+        
+        if not isinstance(proof_path, list) or len(proof_path) > 64:
+            raise WebGPUValidationError("Invalid proof path format or length")
+        
         # Convert hashes to uint32 arrays for GPU
-        leaf_bytes = bytes.fromhex(leaf_hash)
         leaf_uint32 = [int.from_bytes(leaf_bytes[i:i+4], 'little') for i in range(0, 32, 4)]
         
-        root_bytes = bytes.fromhex(expected_root)
         root_uint32 = [int.from_bytes(root_bytes[i:i+4], 'little') for i in range(0, 32, 4)]
         
         # Serialize data
@@ -521,6 +593,10 @@ class RealWebGPUValidator:
         # Expected root (8 uint32)
         for val in root_uint32:
             result.extend(struct.pack('<I', val))
+        
+        # Validate final size
+        if len(result) > self.MAX_INPUT_DATA_SIZE:
+            raise WebGPUValidationError(f"Prepared data too large: {len(result)} bytes")
         
         return bytes(result)
     

@@ -4,6 +4,7 @@ Uses actual WebAssembly for cryptographic proof verification.
 """
 
 import logging
+import os
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 from dataclasses import dataclass
@@ -56,6 +57,12 @@ class RealWASMValidator:
     Loads and executes WASM modules for cryptographic operations
     """
     
+    # Security limits
+    MAX_WASM_MODULE_SIZE = 10 * 1024 * 1024  # 10MB
+    MAX_MEMORY_SIZE = 128 * 1024 * 1024  # 128MB
+    MAX_EXECUTION_TIME_MS = 5000  # 5 seconds
+    MAX_INPUT_SIZE = 1024 * 1024  # 1MB
+    
     def __init__(self, wasm_module_path: Optional[str] = None):
         """
         Initialize real WASM validator
@@ -80,13 +87,43 @@ class RealWASMValidator:
             wasm_path: Path to WASM file
         """
         try:
+            # Validate file path
+            if not wasm_path or not isinstance(wasm_path, str):
+                raise WASMValidationError("Invalid WASM file path")
+            
+            # Check file exists and is accessible
+            if not os.path.exists(wasm_path):
+                raise WASMValidationError(f"WASM file not found: {wasm_path}")
+            
+            # Check file size to prevent DoS
+            file_size = os.path.getsize(wasm_path)
+            if file_size > self.MAX_WASM_MODULE_SIZE:
+                raise WASMValidationError(
+                    f"WASM module too large: {file_size} bytes (max: {self.MAX_WASM_MODULE_SIZE} bytes)"
+                )
+            
+            if file_size == 0:
+                raise WASMValidationError("WASM module is empty")
+            
+            # Read WASM bytes
             with open(wasm_path, 'rb') as f:
                 wasm_bytes = f.read()
             
+            # Validate WASM magic number (0x00 0x61 0x73 0x6D)
+            if len(wasm_bytes) < 4 or wasm_bytes[:4] != b'\x00\x61\x73\x6D':
+                raise WASMValidationError("Invalid WASM file format (missing magic number)")
+            
+            # Validate WASM version (0x01 0x00 0x00 0x00)
+            if len(wasm_bytes) < 8 or wasm_bytes[4:8] != b'\x01\x00\x00\x00':
+                raise WASMValidationError("Unsupported WASM version")
+            
+            # Load module with validation
             self.module = wasmtime.Module(self.engine, wasm_bytes)
             self.loaded = True
-            logger.info(f"Loaded WASM module from {wasm_path}")
+            logger.info(f"Loaded WASM module from {wasm_path} (size: {file_size} bytes)")
             
+        except WASMValidationError:
+            raise
         except Exception as e:
             logger.error(f"Failed to load WASM module: {e}")
             raise WASMValidationError(f"Failed to load WASM module: {e}")
@@ -111,8 +148,52 @@ class RealWASMValidator:
         start_time = datetime.utcnow()
         
         try:
+            # Input validation
             if not self.loaded:
                 raise WASMValidationError("WASM module not loaded")
+            
+            # Validate leaf_hash format
+            if not leaf_hash or not isinstance(leaf_hash, str):
+                raise WASMValidationError("Invalid leaf hash format")
+            
+            try:
+                leaf_bytes = bytes.fromhex(leaf_hash)
+                if len(leaf_bytes) != 32:  # Standard hash size
+                    raise WASMValidationError(f"Invalid leaf hash length: {len(leaf_bytes)} (expected 32)")
+            except ValueError:
+                raise WASMValidationError("Invalid leaf hash hex encoding")
+            
+            # Validate expected_root format
+            if not expected_root or not isinstance(expected_root, str):
+                raise WASMValidationError("Invalid expected root format")
+            
+            try:
+                root_bytes = bytes.fromhex(expected_root)
+                if len(root_bytes) != 32:
+                    raise WASMValidationError(f"Invalid root hash length: {len(root_bytes)} (expected 32)")
+            except ValueError:
+                raise WASMValidationError("Invalid root hash hex encoding")
+            
+            # Validate proof_path
+            if not isinstance(proof_path, list):
+                raise WASMValidationError("Invalid proof path format")
+            
+            if len(proof_path) > 64:  # Reasonable limit
+                raise WASMValidationError(f"Proof path too long: {len(proof_path)} (max 64)")
+            
+            for i, (sibling_hash, is_left) in enumerate(proof_path):
+                if not isinstance(sibling_hash, str):
+                    raise WASMValidationError(f"Invalid sibling hash at index {i}")
+                
+                try:
+                    sibling_bytes = bytes.fromhex(sibling_hash)
+                    if len(sibling_bytes) != 32:
+                        raise WASMValidationError(f"Invalid sibling hash length at index {i}")
+                except ValueError:
+                    raise WASMValidationError(f"Invalid sibling hash hex encoding at index {i}")
+                
+                if not isinstance(is_left, bool):
+                    raise WASMValidationError(f"Invalid is_left value at index {i}")
             
             # Create instance with WASI support
             linker = wasmtime.Linker(self.engine)
