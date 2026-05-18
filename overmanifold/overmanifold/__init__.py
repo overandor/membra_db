@@ -50,6 +50,37 @@ from overmanifold.consensus.proof_of_profit import (
     ConsensusStatus
 )
 
+from overmanifold.membra_integration.membra_bridge_client import (
+    MembraBridgeClient,
+    MembraWallet,
+    SMSMiningReward
+)
+
+from overmanifold.membra_integration.sms_payment_gateway import (
+    SMSPaymentGateway,
+    SMSPaymentRequest,
+    SMSPaymentResponse
+)
+
+from overmanifold.membra_integration.email_payment_gateway import (
+    EmailPaymentGateway,
+    EmailPaymentRequest,
+    EmailPaymentResponse
+)
+
+from overmanifold.membra_integration.free_transaction_sponsor import (
+    FreeTransactionSponsor,
+    Sponsor,
+    SponsoredTransaction
+)
+
+from overmanifold.membra_integration.unified_free_payment_api import (
+    UnifiedFreePaymentAPI,
+    FreePaymentRequest,
+    FreePaymentResponse,
+    PaymentMethod
+)
+
 __version__ = "0.1.0"
 __author__ = "Overmanifold Protocol Foundation"
 
@@ -95,5 +126,23 @@ __all__ = [
     'InverseMiningOperation',
     'TreasuryDeflation',
     'WorkType',
-    'ConsensusStatus'
+    'ConsensusStatus',
+    
+    # Membra Bridge Integration
+    'MembraBridgeClient',
+    'MembraWallet',
+    'SMSMiningReward',
+    'SMSPaymentGateway',
+    'SMSPaymentRequest',
+    'SMSPaymentResponse',
+    'EmailPaymentGateway',
+    'EmailPaymentRequest',
+    'EmailPaymentResponse',
+    'FreeTransactionSponsor',
+    'Sponsor',
+    'SponsoredTransaction',
+    'UnifiedFreePaymentAPI',
+    'FreePaymentRequest',
+    'FreePaymentResponse',
+    'PaymentMethod'
 ]
