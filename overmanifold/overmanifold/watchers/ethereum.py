@@ -13,14 +13,6 @@ from dataclasses import dataclass
 import sys
 import os
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
-
-try:
-    from web3 import Web3
-    from web3.middleware import geth_poa
-except ImportError:
-    Web3 = None
-
 from overmanifold.infrastructure.logging_config import get_logger
 from overmanifold.infrastructure.config import get_config
 from overmanifold.workers.transaction_endpoint import (
@@ -29,6 +21,13 @@ from overmanifold.workers.transaction_endpoint import (
 
 logger = get_logger("ethereum_watcher")
 config = get_config()
+
+try:
+    from web3 import Web3
+    from web3.middleware import geth_poa
+except ImportError:
+    Web3 = None
+    logger.error("Web3 not installed - cannot connect to Ethereum")
 
 
 @dataclass

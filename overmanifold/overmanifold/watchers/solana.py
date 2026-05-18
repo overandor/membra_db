@@ -13,7 +13,11 @@ from dataclasses import dataclass
 import sys
 import os
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
+from overmanifold.infrastructure.logging_config import get_logger
+from overmanifold.infrastructure.config import get_config
+
+logger = get_logger("solana_watcher")
+config = get_config()
 
 try:
     from solana.rpc.async_api import AsyncClient
@@ -23,9 +27,7 @@ except ImportError:
     AsyncClient = None
     Transaction = None
     PublicKey = None
-
-from overmanifold.infrastructure.logging_config import get_logger
-from overmanifold.infrastructure.config import get_config
+    logger.error("Solana library not installed - cannot connect to Solana")
 from overmanifold.workers.transaction_endpoint import (
     TransactionObserver, LifecycleState, EventType
 )
