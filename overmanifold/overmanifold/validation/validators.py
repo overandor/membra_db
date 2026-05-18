@@ -27,6 +27,15 @@ class ValidationSeverity(Enum):
     HIGH = "high"  # Major issue, should reject
     MEDIUM = "medium"  # Warning, may accept with sanitization
     LOW = "low"  # Minor issue, can accept
+    
+    # Define severity order for comparison
+    def __lt__(self, other):
+        severity_order = {ValidationSeverity.LOW: 0, ValidationSeverity.MEDIUM: 1, ValidationSeverity.HIGH: 2, ValidationSeverity.CRITICAL: 3}
+        return severity_order[self] < severity_order[other]
+    
+    def __gt__(self, other):
+        severity_order = {ValidationSeverity.LOW: 0, ValidationSeverity.MEDIUM: 1, ValidationSeverity.HIGH: 2, ValidationSeverity.CRITICAL: 3}
+        return severity_order[self] > severity_order[other]
 
 
 @dataclass
@@ -42,7 +51,7 @@ class ValidationResult:
         """Add an error to the validation result."""
         self.errors.append(message)
         self.is_valid = False
-        if severity.value > self.severity.value:
+        if severity > self.severity:
             self.severity = severity
     
     def add_warning(self, message: str) -> None:
@@ -280,7 +289,7 @@ class InputValidator:
         
         string_result = self.validate_string(value, field_name, min_length=10)
         if not string_result.is_valid:
-            return result
+            return string_result
         
         if not self.DID_PATTERN.match(str(value)):
             result.add_error(f"{field_name} must be a valid DID", ValidationSeverity.HIGH)
@@ -447,12 +456,12 @@ class Sanitizer:
     def sanitize_filename(value: str) -> str:
         """Sanitize filename."""
         # Remove dangerous characters
-        dangerous_chars = ['/', '\\', ':', '*', '?', '"', '<', '>', '|', '\x00']
+        dangerous_chars = ['/', '\\', ':', '*', '?', '"', '<', '>', '|', '\x00', '.']
         for char in dangerous_chars:
             value = value.replace(char, '_')
         
-        # Remove leading dots and spaces
-        value = value.lstrip('. ')
+        # Remove leading spaces
+        value = value.lstrip(' ')
         
         # Limit length
         if len(value) > 255:

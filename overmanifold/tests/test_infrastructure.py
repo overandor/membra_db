@@ -39,6 +39,9 @@ class TestConfigLoader:
             f.write("DEBUG=true\n")
             f.write("DB_HOST=testhost\n")
             f.write("DB_PORT=5433\n")
+            f.write("DB_NAME=overmanifold\n")
+            f.write("DB_USER=overmanifold\n")
+            f.write("DB_PASSWORD=test_password\n")
             f.write("SECRET_KEY=test_secret_key_32_characters_long\n")
             temp_file = f.name
         

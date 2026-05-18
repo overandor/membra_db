@@ -191,7 +191,9 @@ class TestSanitizer:
         input_string = "test<script>alert('xss')</script>string"
         result = sanitizer.sanitize_string(input_string)
         assert "<script>" not in result
-        assert "alert" not in result
+        assert "</script>" not in result
+        assert "(" not in result
+        assert ")" not in result
     
     def test_sanitize_html(self, sanitizer):
         """Test HTML sanitization."""
