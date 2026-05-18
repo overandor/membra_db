@@ -19,6 +19,7 @@ set(SOURCES
     src/blockchain.cpp
     src/bridge.cpp
     src/orchestrator.cpp
+    src/semantic_handlers.cpp
 )
 
 # Header files
@@ -28,6 +29,7 @@ set(HEADERS
     include/blockchain.h
     include/bridge.h
     include/orchestrator.h
+    include/semantic_handlers.h
 )
 
 # Create library

@@ -7,12 +7,14 @@
 //! - Blockchain system (no Web3 dependency)
 //! - Bridge system (no external API dependency)
 //! - Unified orchestration system
+//! - Semantic value transfer handlers (SMS, email, link, domain, endpoint)
 
 pub mod sms_processor;
 pub mod email_system;
 pub mod blockchain;
 pub mod bridge;
 pub mod orchestrator;
+pub mod semantic_handlers;
 
 pub use sms_processor::{
     LlmSmsProcessor,
@@ -68,6 +70,19 @@ pub use orchestrator::{
     OrchestrationResult,
     ActionExecutionResult,
     SystemStatus,
+};
+
+pub use semantic_handlers::{
+    SemanticTransferHandler,
+    TransferChannel,
+    SemanticType,
+    SemanticValue,
+    TransferPayload,
+    SmsHandler,
+    EmailHandler,
+    LinkHandler,
+    DomainHandler,
+    EndpointHandler,
 };
 
 /// Library version
