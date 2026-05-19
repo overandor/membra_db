@@ -26,6 +26,14 @@ from overmanifold.membra_integration.sms_payment_gateway import SMSPaymentGatewa
 from overmanifold.membra_integration.free_transaction_sponsor import FreeTransactionSponsor
 from overmanifold.membra_integration.oracle_integration import MembraOracleIntegration, OracleEndpoint
 from overmanifold.membra_integration.monitoring import sms_monitoring, TransactionLog, MetricType
+from overmanifold.llm_integration import (
+    LLMSMSProcessor,
+    CustomSMSGateway,
+    LLMCustomEmailSystem,
+    CustomBlockchain,
+    CustomMembraBridge,
+    LLMOrchestrator
+)
 
 logger = get_logger("membra_dashboard")
 
